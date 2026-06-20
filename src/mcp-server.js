@@ -26,7 +26,7 @@ async function handleLine(line) {
   try {
     request = JSON.parse(line);
   } catch {
-    return;
+    return respondError(null, { code: -32700, message: "Parse error" });
   }
   const id = request.id ?? null;
   try {
@@ -73,6 +73,12 @@ function respond(id, result) {
 }
 
 function respondError(id, error) {
-  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message: String(error.message || error) } })}\n`);
+  process.stdout.write(`${JSON.stringify({
+    jsonrpc: "2.0",
+    id,
+    error: {
+      code: Number.isInteger(error.code) ? error.code : -32000,
+      message: String(error.message || error)
+    }
+  })}\n`);
 }
-
