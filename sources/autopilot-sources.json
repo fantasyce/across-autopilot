@@ -1,0 +1,41 @@
+{
+  "sources": [
+    {
+      "id": "openai-codex",
+      "name": "OpenAI Codex",
+      "url": "https://developers.openai.com/codex/",
+      "area": "agentic-coding"
+    },
+    {
+      "id": "github-actions",
+      "name": "GitHub Actions",
+      "url": "https://docs.github.com/actions",
+      "area": "ci-automation"
+    },
+    {
+      "id": "github-copilot-agent",
+      "name": "GitHub Copilot coding agent",
+      "url": "https://docs.github.com/en/copilot/concepts/agents/cloud-agent/about-cloud-agent",
+      "area": "agentic-coding"
+    },
+    {
+      "id": "temporal",
+      "name": "Temporal",
+      "url": "https://docs.temporal.io/",
+      "area": "durable-execution"
+    },
+    {
+      "id": "opentelemetry",
+      "name": "OpenTelemetry",
+      "url": "https://opentelemetry.io/docs/",
+      "area": "observability"
+    },
+    {
+      "id": "renovate",
+      "name": "Renovate",
+      "url": "https://docs.renovatebot.com/key-concepts/automerge/",
+      "area": "dependency-automation"
+    }
+  ]
+}
+

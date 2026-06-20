@@ -1,0 +1,33 @@
+{
+  "name": "@across/autopilot",
+  "version": "0.1.0",
+  "description": "Controlled autonomous iteration controller for the Across ecosystem.",
+  "type": "module",
+  "bin": {
+    "across-autopilot": "./src/cli.js"
+  },
+  "files": [
+    "src",
+    "sources",
+    "README.md",
+    "AUTOPILOT_RFC.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "check": "npm test && node src/cli.js --help && node src/mcp-server.js --help"
+  },
+  "keywords": [
+    "agent",
+    "autopilot",
+    "automation",
+    "workflow",
+    "across"
+  ],
+  "author": "Across Autopilot contributors",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}
+
