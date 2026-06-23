@@ -1,0 +1,127 @@
+{
+  "schema_version": "across-loop-spec/1.0",
+  "id": "aaa-release-readiness-gate",
+  "name": "AAA Release Readiness Gate",
+  "description": "Evaluate whether the Across ecosystem is ready for release.",
+  "owner": {
+    "type": "local_user",
+    "id": "default"
+  },
+  "compatibility": {
+    "min_autopilot_version": ">=0.2.0",
+    "required_orchestrator": ">=0.7.0",
+    "required_context": ">=0.8.0",
+    "required_host": ">=0.9.0"
+  },
+  "required_capabilities": [
+    "source.directory",
+    "action.orchestrator_task_dispatch",
+    "action.quality_gate_evaluation",
+    "output.markdown_report",
+    "memory.pending_summary"
+  ],
+  "trigger": {
+    "type": "manual"
+  },
+  "scope": {
+    "project_id": "across",
+    "workspace": "."
+  },
+  "autonomy": {
+    "level": 2,
+    "requires_human_approval_above": 2
+  },
+  "sources": [
+    {
+      "id": "workspace",
+      "type": "directory",
+      "adapter": "directory",
+      "path": ".",
+      "max_files": 120
+    }
+  ],
+  "actions": {
+    "allowed": [
+      "file_read",
+      "git_read",
+      "read_only_analysis",
+      "orchestrator_task_dispatch",
+      "quality_gate_evaluation",
+      "report_generation",
+      "write_pending_memory"
+    ],
+    "blocked": [
+      "merge_pr",
+      "release_publish",
+      "sign_artifact",
+      "write_secret"
+    ]
+  },
+  "execute": {
+    "engine": "across-orchestrator",
+    "mode": "task"
+  },
+  "outputs": [
+    {
+      "type": "markdown_report",
+      "to": "run://readiness/report.md",
+      "policy": "create"
+    },
+    {
+      "type": "json_artifact",
+      "to": "run://readiness/evidence.json",
+      "policy": "overwrite"
+    },
+    {
+      "type": "context_memory",
+      "to": "context://pending",
+      "policy": "append"
+    }
+  ],
+  "gates": [
+    {
+      "id": "source_reachable",
+      "required": true
+    },
+    {
+      "id": "orchestrator_quality_passed",
+      "required": true
+    }
+  ],
+  "memory": {
+    "provider": "across-context",
+    "recall": true,
+    "remember": true,
+    "write_status": "pending"
+  },
+  "failure_policy": {
+    "max_retries": 1,
+    "retry_backoff": "linear",
+    "continue_on_gate_failure": false,
+    "dead_letter": "context_memory"
+  },
+  "sandbox": {
+    "filesystem": "run_scoped",
+    "network": "adapter_scoped",
+    "env": "minimal"
+  },
+  "evidence_contract": {
+    "schema_version": "across-loop-evidence/1.0",
+    "required_sections": ["sources", "actions", "gates", "outputs", "memory", "audit"]
+  },
+  "used_adapters": {
+    "sources": ["directory"],
+    "actions": [
+      "read_only_analysis",
+      "orchestrator_task_dispatch",
+      "quality_gate_evaluation",
+      "report_generation",
+      "memory_write_candidate"
+    ],
+    "outputs": ["markdown_report", "json_artifact", "context_memory"]
+  },
+  "pack_config": {
+    "required_workflows": ["open-source-and-regression"],
+    "score_dimensions": ["worktree", "ci", "e2e", "packaged_app", "release_evidence"]
+  }
+}

@@ -1,0 +1,343 @@
+{
+  "schema_version": "across-loop-spec/1.0",
+  "id": "aaa-research-driven-self-iteration",
+  "name": "AAA Research Driven Self Iteration",
+  "description": "Research current agent-engineering practices, let the host model choose a bounded product iteration, implement it in B, validate it, and stop for human review.",
+  "owner": {
+    "type": "local_user",
+    "id": "default"
+  },
+  "compatibility": {
+    "min_autopilot_version": ">=0.2.0",
+    "required_orchestrator": ">=0.7.0",
+    "required_context": ">=0.8.0",
+    "required_host": ">=0.9.0"
+  },
+  "required_capabilities": [
+    "source.url",
+    "source.manual_input",
+    "action.candidate_ecosystem_acquire",
+    "action.product_iteration_strategy",
+    "action.host_code_iteration",
+    "action.candidate_ecosystem_diff",
+    "action.candidate_ecosystem_validation",
+    "action.candidate_self_hosting_probe",
+    "action.semantic_alignment_review",
+    "output.markdown_report",
+    "memory.pending_summary"
+  ],
+  "trigger": {
+    "type": "manual"
+  },
+  "scope": {
+    "project_id": "across",
+    "workspace": "."
+  },
+  "autonomy": {
+    "level": 3,
+    "requires_human_approval_above": 3
+  },
+  "sources": [
+    {
+      "id": "openhands",
+      "type": "url",
+      "adapter": "url",
+      "url": "https://openhands.dev/"
+    },
+    {
+      "id": "swe-agent-docs",
+      "type": "url",
+      "adapter": "url",
+      "url": "https://swe-agent.com/latest/"
+    },
+    {
+      "id": "langgraph-overview",
+      "type": "url",
+      "adapter": "url",
+      "url": "https://docs.langchain.com/oss/python/langgraph/overview"
+    },
+    {
+      "id": "openai-agents-guide",
+      "type": "url",
+      "adapter": "url",
+      "url": "https://developers.openai.com/api/docs/guides/agents"
+    },
+    {
+      "id": "product-context",
+      "type": "manual_input",
+      "adapter": "manual_input",
+      "title": "Across product self-iteration policy",
+      "content": "AAA should act as stable controller A, mutate only B candidate workspaces under ~/.across, use model-backed research and code decisions, validate fully, keep merge/release human-approved, and reject self-proof-only candidate changes."
+    }
+  ],
+  "actions": {
+    "allowed": [
+      "web_search",
+      "file_read",
+      "git_read",
+      "candidate_ecosystem_acquire",
+      "product_iteration_strategy",
+      "host_code_iteration",
+      "candidate_ecosystem_diff",
+      "candidate_ecosystem_validation",
+      "candidate_self_hosting_probe",
+      "semantic_alignment_review",
+      "promotion_report_generation",
+      "quality_gate_evaluation",
+      "report_generation",
+      "write_pending_memory"
+    ],
+    "blocked": [
+      "merge_pr",
+      "release_publish",
+      "sign_artifact",
+      "write_secret"
+    ]
+  },
+  "execute": {
+    "engine": "across-orchestrator",
+    "mode": "task"
+  },
+  "outputs": [
+    {
+      "type": "markdown_report",
+      "to": "run://research-self-iteration/report.md",
+      "policy": "create"
+    },
+    {
+      "type": "json_artifact",
+      "to": "run://research-self-iteration/evidence.json",
+      "policy": "overwrite"
+    },
+    {
+      "type": "context_memory",
+      "to": "context://pending",
+      "policy": "append"
+    }
+  ],
+  "gates": [
+    {
+      "id": "four_repo_manifest_written",
+      "required": true
+    },
+    {
+      "id": "candidate_runtime_preflight_passed",
+      "required": true
+    },
+    {
+      "id": "research_iteration_strategy_ready",
+      "required": true
+    },
+    {
+      "id": "candidate_b_has_code_diff",
+      "required": true
+    },
+    {
+      "id": "source_a_unchanged",
+      "required": true
+    },
+    {
+      "id": "candidate_ecosystem_validation_passed",
+      "required": true
+    },
+    {
+      "id": "self_hosting_probe_passed_or_not_required",
+      "required": true
+    },
+    {
+      "id": "semantic_alignment_passed",
+      "required": true
+    },
+    {
+      "id": "promotion_report_ready",
+      "required": true
+    }
+  ],
+  "memory": {
+    "provider": "across-context",
+    "recall": true,
+    "remember": true,
+    "write_status": "pending"
+  },
+  "failure_policy": {
+    "max_retries": 0,
+    "retry_backoff": "linear",
+    "continue_on_gate_failure": false,
+    "dead_letter": "context_memory"
+  },
+  "sandbox": {
+    "filesystem": "run_scoped",
+    "network": "adapter_scoped",
+    "env": "minimal"
+  },
+  "evidence_contract": {
+    "schema_version": "across-loop-evidence/1.0",
+    "required_sections": ["sources", "actions", "gates", "outputs", "memory", "audit", "candidate"]
+  },
+  "used_adapters": {
+    "sources": ["url", "manual_input"],
+    "actions": [
+      "candidate_ecosystem_acquire",
+      "product_iteration_strategy",
+      "host_code_iteration",
+      "candidate_ecosystem_diff",
+      "candidate_ecosystem_validation",
+      "candidate_self_hosting_probe",
+      "semantic_alignment_review",
+      "promotion_report_generation",
+      "quality_gate_evaluation",
+      "report_generation",
+      "memory_write_candidate"
+    ],
+    "outputs": ["markdown_report", "json_artifact", "context_memory"]
+  },
+  "pack_config": {
+    "target_repo": "across-agents-assistant",
+    "candidate_ecosystem": {
+      "mode": "snapshot",
+      "repos": []
+    },
+    "candidate_validation": {
+      "max_repairs": 3
+    },
+    "research_strategy": {
+      "goal": "Review current autonomous software engineering agent practices and choose one bounded product improvement for AAA's self-iteration loop.",
+      "timeout_ms": 240000,
+      "product_context": {
+        "ecosystem": ["across-agents-assistant", "across-orchestrator", "across-context", "across-autopilot"],
+        "stable_controller": "AAA",
+        "candidate_policy": "A writes only to B candidate workspaces under ~/.across; merge and release remain human-approved.",
+        "desired_shape": "research -> judge -> plan -> implement in B -> validate -> review package"
+      },
+      "candidate_targets": [
+        {
+          "id": "research_signal_quality",
+          "target_repo": "across-agents-assistant",
+          "summary": "Add a product helper that scores research-backed iteration candidates before promotion review.",
+          "goal": "Based on agent-engineering research sources, implement score_research_iteration_candidate(research_brief: dict) in backend/src/across_agents_assistant/autopilot_research_signal.py plus tests. The helper should recommend implement/review/reject using evidence count, relevance, validation depth, and autonomy risk.",
+          "allowed_patch_paths": [
+            "backend/src/across_agents_assistant/autopilot_research_signal.py",
+            "backend/tests/test_autopilot_research_signal.py"
+          ],
+          "context_files": [
+            "README.md",
+            "LOOP_ENGINEERING_PLATFORM_PLAN.md",
+            "CANDIDATE_PRODUCT_PIPELINE_PLAN.md"
+          ],
+          "validation_commands": [
+            {
+              "repo": "across-agents-assistant",
+              "command": "python3",
+              "args": ["-m", "py_compile", "backend/src/across_agents_assistant/autopilot_research_signal.py", "backend/tests/test_autopilot_research_signal.py"],
+              "timeout_ms": 30000
+            },
+            {
+              "repo": "across-agents-assistant",
+              "command": "python3",
+              "args": [
+                "-c",
+                "import sys, runpy; sys.path.insert(0, 'backend/src'); ns=runpy.run_path('backend/tests/test_autopilot_research_signal.py'); tests=[v for k,v in ns.items() if k.startswith('test_') and callable(v)]; assert tests, 'no test functions found'; [test() for test in tests]"
+              ],
+              "timeout_ms": 30000
+            },
+            {
+              "repo": "across-agents-assistant",
+              "command": "python3",
+              "args": [
+                "-c",
+                "import sys; sys.path.insert(0, 'backend/src'); from across_agents_assistant.autopilot_research_signal import score_research_iteration_candidate; result=score_research_iteration_candidate({'sources':[{'id':'openhands','relevance':'high'}], 'validation_commands':['python -m pytest'], 'autonomy_level':3}); assert result['recommendation'] in {'implement','review'}; assert result['evidence_count'] >= 1"
+              ],
+              "timeout_ms": 30000
+            }
+          ],
+          "semantic_review": {
+            "require_model_backed": true,
+            "require_selected_target_change": true,
+            "forbidden_changed_path_patterns": [
+              "loop_engineering_candidate.py",
+              "test_loop_engineering_candidate.py"
+            ],
+            "reject_self_proof_only": true,
+            "minimum_validation_commands": 3,
+            "required_summary_keywords": [
+              "research",
+              "candidate"
+            ]
+          },
+          "risk": "low"
+        },
+        {
+          "id": "research_review_package",
+          "target_repo": "across-agents-assistant",
+          "summary": "Add a review-package helper for research-to-implementation evidence.",
+          "goal": "Implement build_research_iteration_review_package(evidence: dict) in backend/src/across_agents_assistant/autopilot_research_review.py plus tests. It should summarize research sources, selected target, changed files, validation, and human-review next steps.",
+          "allowed_patch_paths": [
+            "backend/src/across_agents_assistant/autopilot_research_review.py",
+            "backend/tests/test_autopilot_research_review.py"
+          ],
+          "context_files": [
+            "README.md",
+            "LOOP_ENGINEERING_FINAL_TEST_REPORT.md",
+            "CANDIDATE_PRODUCT_PIPELINE_PLAN.md"
+          ],
+          "validation_commands": [
+            {
+              "repo": "across-agents-assistant",
+              "command": "python3",
+              "args": ["-m", "py_compile", "backend/src/across_agents_assistant/autopilot_research_review.py", "backend/tests/test_autopilot_research_review.py"],
+              "timeout_ms": 30000
+            },
+            {
+              "repo": "across-agents-assistant",
+              "command": "python3",
+              "args": [
+                "-c",
+                "import sys, runpy; sys.path.insert(0, 'backend/src'); ns=runpy.run_path('backend/tests/test_autopilot_research_review.py'); tests=[v for k,v in ns.items() if k.startswith('test_') and callable(v)]; assert tests, 'no test functions found'; [test() for test in tests]"
+              ],
+              "timeout_ms": 30000
+            },
+            {
+              "repo": "across-agents-assistant",
+              "command": "python3",
+              "args": [
+                "-c",
+                "import sys; sys.path.insert(0, 'backend/src'); from across_agents_assistant.autopilot_research_review import build_research_iteration_review_package; package=build_research_iteration_review_package({'sources':[{'id':'source'}], 'changed_files':['backend/src/x.py'], 'validation_status':'passed'}); assert package['review_required'] is True; assert package['source_count'] == 1"
+              ],
+              "timeout_ms": 30000
+            }
+          ],
+          "semantic_review": {
+            "require_model_backed": true,
+            "require_selected_target_change": true,
+            "reject_self_proof_only": true,
+            "minimum_validation_commands": 3,
+            "required_summary_keywords": ["research", "review"]
+          },
+          "risk": "low"
+        }
+      ]
+    },
+    "self_hosting_probe": {
+      "required": true,
+      "timeout_ms": 180000
+    },
+    "model_policy": {
+      "required": true,
+      "provider": "minimax",
+      "model": "MiniMax-M3",
+      "temperature": 0.2,
+      "max_tokens": 4200,
+      "direct_patches": true,
+      "code_mode": "direct_patches"
+    }
+  },
+  "model_policy": {
+    "required": true,
+    "provider": "minimax",
+    "model": "MiniMax-M3",
+    "temperature": 0.2,
+    "max_tokens": 4200,
+    "direct_patches": true,
+    "code_mode": "direct_patches"
+  }
+}

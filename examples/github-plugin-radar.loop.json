@@ -1,0 +1,157 @@
+{
+  "schema_version": "across-loop-spec/1.0",
+  "id": "github-plugin-radar",
+  "name": "GitHub Plugin Radar",
+  "description": "Discover and score open-source plugins or tools for ecosystem integration.",
+  "owner": {
+    "type": "local_user",
+    "id": "default"
+  },
+  "compatibility": {
+    "min_autopilot_version": ">=0.2.0",
+    "required_orchestrator": ">=0.7.0",
+    "required_context": ">=0.8.0",
+    "required_host": ">=0.9.0"
+  },
+  "required_capabilities": [
+    "source.github_search",
+    "source.github_repo",
+    "action.license_check",
+    "action.manifest_inspection",
+    "action.compatibility_scoring",
+    "output.markdown_report",
+    "memory.pending_summary"
+  ],
+  "trigger": {
+    "type": "manual"
+  },
+  "scope": {
+    "project_id": "plugin-radar",
+    "workspace": "."
+  },
+  "autonomy": {
+    "level": 2,
+    "requires_human_approval_above": 2
+  },
+  "sources": [
+    {
+      "id": "fixture-plugin-search",
+      "type": "github_search",
+      "adapter": "github_search",
+      "query": "topic:mcp language:javascript",
+      "repositories": [
+        {
+          "id": "sample-plugin",
+          "name": "sample-plugin",
+          "url": "https://github.com/example/sample-plugin",
+          "license": "MIT",
+          "files": [
+            {
+              "path": "package.json",
+              "content": "{\"name\":\"sample-plugin\",\"version\":\"1.0.0\",\"dependencies\":{\"zod\":\"^3.0.0\"}}"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "actions": {
+    "allowed": [
+      "web_search",
+      "file_read",
+      "read_only_analysis",
+      "license_check",
+      "manifest_inspection",
+      "dependency_risk_check",
+      "compatibility_scoring",
+      "orchestrator_task_dispatch",
+      "quality_gate_evaluation",
+      "report_generation",
+      "write_pending_memory"
+    ],
+    "blocked": [
+      "merge_pr",
+      "release_publish",
+      "sign_artifact",
+      "write_secret"
+    ]
+  },
+  "execute": {
+    "engine": "across-orchestrator",
+    "mode": "task"
+  },
+  "outputs": [
+    {
+      "type": "markdown_report",
+      "to": "run://plugin-radar/report.md",
+      "policy": "create"
+    },
+    {
+      "type": "json_artifact",
+      "to": "run://plugin-radar/evidence.json",
+      "policy": "overwrite"
+    },
+    {
+      "type": "context_memory",
+      "to": "context://pending",
+      "policy": "append"
+    }
+  ],
+  "gates": [
+    {
+      "id": "source_reachable",
+      "required": true
+    },
+    {
+      "id": "license_acceptable",
+      "required": true
+    },
+    {
+      "id": "manifest_readable",
+      "required": true
+    },
+    {
+      "id": "recommendation_has_rationale",
+      "required": true
+    }
+  ],
+  "memory": {
+    "provider": "across-context",
+    "recall": true,
+    "remember": true,
+    "write_status": "pending"
+  },
+  "failure_policy": {
+    "max_retries": 1,
+    "retry_backoff": "linear",
+    "continue_on_gate_failure": false,
+    "dead_letter": "context_memory"
+  },
+  "sandbox": {
+    "filesystem": "run_scoped",
+    "network": "adapter_scoped",
+    "env": "minimal"
+  },
+  "evidence_contract": {
+    "schema_version": "across-loop-evidence/1.0",
+    "required_sections": ["sources", "actions", "gates", "outputs", "memory", "audit"]
+  },
+  "used_adapters": {
+    "sources": ["github_search", "github_repo", "package_registry"],
+    "actions": [
+      "license_check",
+      "manifest_inspection",
+      "dependency_risk_check",
+      "compatibility_scoring",
+      "orchestrator_task_dispatch",
+      "quality_gate_evaluation",
+      "report_generation",
+      "memory_write_candidate"
+    ],
+    "outputs": ["markdown_report", "json_artifact", "context_memory"]
+  },
+  "pack_config": {
+    "minimum_score": 60,
+    "acceptable_licenses": ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC"]
+  }
+}

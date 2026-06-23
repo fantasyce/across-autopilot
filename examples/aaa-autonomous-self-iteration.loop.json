@@ -1,0 +1,323 @@
+{
+  "schema_version": "across-loop-spec/1.0",
+  "id": "aaa-autonomous-self-iteration",
+  "name": "AAA Autonomous Self Iteration",
+  "description": "Use stable AAA as controller A to research current AI agent and LLM application architecture trends, compare them against the Across ecosystem, rank one bounded architecture or capability improvement, implement it in B, validate it, and review it with a distinct acceptance model.",
+  "owner": {
+    "type": "local_user",
+    "id": "default"
+  },
+  "compatibility": {
+    "min_autopilot_version": ">=0.2.0",
+    "required_orchestrator": ">=0.7.0",
+    "required_context": ">=0.8.0",
+    "required_host": ">=0.9.0"
+  },
+  "required_capabilities": [
+    "source.manual_input",
+    "source.url",
+    "action.source_digest",
+    "action.candidate_ecosystem_acquire",
+    "action.product_iteration_strategy",
+    "action.host_code_iteration",
+    "action.candidate_ecosystem_diff",
+    "action.candidate_ecosystem_validation",
+    "action.candidate_app_lifecycle",
+    "action.candidate_self_hosting_probe",
+    "action.semantic_alignment_review",
+    "output.markdown_report",
+    "memory.pending_summary"
+  ],
+  "trigger": {
+    "type": "manual"
+  },
+  "scope": {
+    "project_id": "across",
+    "workspace": "."
+  },
+  "autonomy": {
+    "level": 3,
+    "requires_human_approval_above": 3
+  },
+  "sources": [
+    {
+      "id": "loop-engineering-architecture-signal",
+      "type": "manual_input",
+      "adapter": "manual_input",
+      "title": "Loop Engineering architecture signal",
+      "content": "Current product direction: make AAA autonomous self-iteration general and production-safe. Prefer stable Tool Packs over ad-hoc scripts, persistent artifacts/contracts/backlog/timeline over ephemeral prompts, independent reviewer gates over builder self-review, and B/C candidate workspaces under ~/.across instead of source A mutation."
+    },
+    {
+      "id": "tool-pack-operational-signal",
+      "type": "manual_input",
+      "adapter": "manual_input",
+      "title": "Tool Pack operational signal",
+      "content": "Repeated loops should not ask the model to invent git inspection, validation, or candidate workspace procedures from scratch. Deterministic Tool Packs should own git repository inspection, source digest, candidate workspace mutation, validation harness execution, and independent review evidence. The model should decide which pack to use and how to interpret results."
+    },
+    {
+      "id": "openai-agents-architecture-signal",
+      "type": "url",
+      "adapter": "url",
+      "title": "OpenAI Agents SDK architecture signal",
+      "url": "https://developers.openai.com/api/docs/guides/agents"
+    },
+    {
+      "id": "mcp-tooling-architecture-signal",
+      "type": "url",
+      "adapter": "url",
+      "title": "Model Context Protocol tool boundary signal",
+      "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/tools"
+    },
+    {
+      "id": "a2a-agent-interoperability-signal",
+      "type": "url",
+      "adapter": "url",
+      "title": "Agent2Agent interoperability signal",
+      "url": "https://github.com/a2aproject/A2A"
+    }
+  ],
+  "actions": {
+    "allowed": [
+      "file_read",
+      "git_read",
+      "candidate_ecosystem_acquire",
+      "product_iteration_strategy",
+      "host_code_iteration",
+      "candidate_ecosystem_diff",
+      "candidate_ecosystem_validation",
+      "candidate_app_lifecycle",
+      "candidate_self_hosting_probe",
+      "semantic_alignment_review",
+      "promotion_report_generation",
+      "quality_gate_evaluation",
+      "report_generation",
+      "write_pending_memory"
+    ],
+    "blocked": [
+      "merge_pr",
+      "release_publish",
+      "sign_artifact",
+      "write_secret"
+    ]
+  },
+  "execute": {
+    "engine": "across-orchestrator",
+    "mode": "task"
+  },
+  "outputs": [
+    {
+      "type": "markdown_report",
+      "to": "run://autonomous-self-iteration/report.md",
+      "policy": "create"
+    },
+    {
+      "type": "json_artifact",
+      "to": "run://autonomous-self-iteration/evidence.json",
+      "policy": "overwrite"
+    },
+    {
+      "type": "context_memory",
+      "to": "context://pending",
+      "policy": "append"
+    }
+  ],
+  "gates": [
+    {
+      "id": "four_repo_manifest_written",
+      "required": true
+    },
+    {
+      "id": "candidate_runtime_preflight_passed",
+      "required": true
+    },
+    {
+      "id": "dynamic_backlog_ready",
+      "required": true
+    },
+    {
+      "id": "research_iteration_strategy_ready",
+      "required": true
+    },
+    {
+      "id": "candidate_b_has_code_diff",
+      "required": true
+    },
+    {
+      "id": "source_a_unchanged",
+      "required": true
+    },
+    {
+      "id": "candidate_ecosystem_validation_passed",
+      "required": true
+    },
+    {
+      "id": "candidate_app_lifecycle_passed",
+      "required": true
+    },
+    {
+      "id": "self_hosting_probe_passed_or_not_required",
+      "required": true
+    },
+    {
+      "id": "semantic_alignment_passed",
+      "required": true
+    },
+    {
+      "id": "independent_reviewer_passed",
+      "required": true
+    },
+    {
+      "id": "distinct_reviewer_model_passed",
+      "required": true
+    },
+    {
+      "id": "promotion_report_ready",
+      "required": true
+    }
+  ],
+  "memory": {
+    "provider": "across-context",
+    "recall": true,
+    "remember": true,
+    "write_status": "pending"
+  },
+  "failure_policy": {
+    "max_retries": 0,
+    "retry_backoff": "linear",
+    "continue_on_gate_failure": false,
+    "dead_letter": "context_memory"
+  },
+  "sandbox": {
+    "filesystem": "run_scoped",
+    "network": "adapter_scoped",
+    "env": "minimal"
+  },
+  "runtime_policy": {
+    "risk_profile": "high",
+    "timeouts": {
+      "total_run_timeout_ms": 1200000,
+      "adapter_timeout_ms": 300000,
+      "model_timeout_ms": 300000
+    },
+    "budget": {
+      "max_model_calls": 12,
+      "max_candidate_repairs": 3,
+      "max_usd": 0
+    },
+    "network_policy": {
+      "mode": "adapter_scoped",
+      "allowlist": [
+        "developers.openai.com",
+        "modelcontextprotocol.io",
+        "github.com"
+      ]
+    },
+    "filesystem_policy": {
+      "mode": "run_scoped",
+      "allowlist_roots": []
+    },
+    "promotion": {
+      "human_approval_required": true,
+      "merge_release_signing_blocked": true
+    }
+  },
+  "evidence_contract": {
+    "schema_version": "across-loop-evidence/1.0",
+    "required_sections": ["sources", "actions", "gates", "outputs", "memory", "audit", "candidate"]
+  },
+  "used_adapters": {
+    "sources": ["manual_input", "url"],
+    "actions": [
+      "source_digest",
+      "candidate_ecosystem_acquire",
+      "product_iteration_strategy",
+      "host_code_iteration",
+      "candidate_ecosystem_diff",
+      "candidate_ecosystem_validation",
+      "candidate_app_lifecycle",
+      "candidate_self_hosting_probe",
+      "semantic_alignment_review",
+      "promotion_report_generation",
+      "quality_gate_evaluation",
+      "report_generation",
+      "memory_write_candidate"
+    ],
+    "outputs": ["markdown_report", "json_artifact", "context_memory"]
+  },
+  "pack_config": {
+    "target_repo": "across-agents-assistant",
+    "candidate_ecosystem": {
+      "mode": "snapshot",
+      "repos": []
+    },
+    "candidate_validation": {
+      "max_repairs": 3
+    },
+    "candidate_app_lifecycle": {
+      "required": true,
+      "timeout_ms": 600000
+    },
+    "self_hosting_probe": {
+      "required": true,
+      "timeout_ms": 240000
+    },
+    "research_strategy": {
+      "autonomous": true,
+      "dynamic_backlog": true,
+      "target_generation": "model",
+      "allow_model_generated_targets": true,
+      "minimum_candidates": 3,
+      "goal": "Research current AI agent and LLM application architecture trends, including agent handoffs, guardrails, tool protocols, external capability registries, interoperability protocols, context engineering, observability, and human-in-the-loop review. Compare those trends against AAA, Autopilot, Orchestrator, and Context; identify one bounded architecture or capability that can be safely absorbed into the Across ecosystem; implement it only in B; validate it; and stop for distinct-model independent review.",
+      "timeout_ms": 240000,
+      "product_context": {
+        "ecosystem": ["across-agents-assistant", "across-orchestrator", "across-context", "across-autopilot"],
+        "stable_controller": "AAA",
+        "candidate_policy": "A writes only to B candidate workspaces under ~/.across; merge and release remain human-approved.",
+        "desired_shape": "external ecosystem research -> product gap analysis -> trigger/contract/artifacts/timeline -> tool packs -> model-backed builder -> validation -> distinct-model reviewer -> promotion package",
+        "research_domains": [
+          "agent orchestration and handoffs",
+          "guardrails and human review",
+          "MCP-style tool/resource/prompt boundaries",
+          "agent interoperability protocols",
+          "context engineering and memory",
+          "tracing, telemetry, and evals"
+        ]
+      }
+    },
+    "code_iteration": {
+      "timeout_ms": 300000
+    },
+    "model_policy": {
+      "required": true,
+      "provider": "minimax",
+      "model": "MiniMax-M3",
+      "direct_patches": true,
+      "temperature": 0.2,
+      "max_tokens": 8192
+    },
+    "research_model_policy": {
+      "provider": "minimax",
+      "model": "MiniMax-M3",
+      "temperature": 0.2,
+      "max_tokens": 8192
+    },
+    "builder_model_policy": {
+      "provider": "minimax",
+      "model": "MiniMax-M3",
+      "fallback_models": ["MiniMax-M2.7-highspeed", "MiniMax-M2.7", "MiniMax-M2.5-highspeed"],
+      "direct_patches": true,
+      "allow_host_validation_repair_fallback": true,
+      "temperature": 0.2,
+      "max_tokens": 8192
+    },
+    "reviewer_model_policy": {
+      "required": true,
+      "provider": "minimax",
+      "model": "MiniMax-M2.5",
+      "fallback_models": ["MiniMax-M2.7-highspeed", "MiniMax-M2.7", "MiniMax-M2.5-highspeed"],
+      "temperature": 0.0,
+      "max_tokens": 2048,
+      "require_distinct_from_builder": true
+    }
+  }
+}

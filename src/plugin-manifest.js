@@ -40,13 +40,24 @@ export async function renderPluginManifest(options = {}) {
       stableCandidatePromotion: true,
       candidatePlanning: true,
       promotionReports: true,
+      loopSpecValidation: true,
+      loopSupervisor: true,
+      adapterRegistry: true,
+      evidenceEnvelope: true,
+      evidenceIntegrity: true,
+      roleEvidence: true,
+      aggregateTelemetry: true,
+      triggerQueue: true,
+      triggerIdempotency: true,
+      toolPackSchemas: true,
+      externalEmbedding: true,
       ecosystemResearch: true,
       agentLoopExecutionDelegation: true,
       contextMemoryCandidates: true,
       localFirst: true
     },
     compatibility: {
-      requiredHostVersion: ">=0.8.29",
+      requiredHostVersion: ">=0.9.0",
       pluginApiVersion: "2026-06-10",
       compatiblePluginApiVersions: ["2026-06-10"]
     },
@@ -98,7 +109,16 @@ export async function renderPluginManifest(options = {}) {
       status: { command: commandPath, args: ["plugin-status", "--json"] },
       review: { command: commandPath, args: ["review", "--json"] },
       candidatePlan: { command: commandPath, args: ["candidate-plan", "--json"] },
-      promotionReport: { command: commandPath, args: ["promotion-report", "--json"] }
+      promotionReport: { command: commandPath, args: ["promotion-report", "--json"] },
+      loopValidate: { command: commandPath, args: ["loop", "validate", "--json"] },
+      loopRun: { command: commandPath, args: ["loop", "run", "--json"] },
+      loopEnqueueTrigger: { command: commandPath, args: ["loop", "enqueue-trigger", "--json"] },
+      loopTriggerQueue: { command: commandPath, args: ["loop", "trigger-queue", "--json"] },
+      loopRunTrigger: { command: commandPath, args: ["loop", "run-trigger", "--json"] },
+      loopStatus: { command: commandPath, args: ["loop", "status", "--json"] },
+      loopEvidence: { command: commandPath, args: ["loop", "evidence", "--json"] },
+      loopEvents: { command: commandPath, args: ["loop", "events", "--json"] },
+      loopTelemetry: { command: commandPath, args: ["loop", "telemetry", "--json"] }
     },
     protocols: {
       cli: { command: commandPath },
@@ -106,9 +126,17 @@ export async function renderPluginManifest(options = {}) {
         transport: "stdio",
         tools: {
           getAutopilotStatus: "get_autopilot_status",
-          generateAutopilotReview: "generate_autopilot_review",
-          createAutopilotCandidatePlan: "create_autopilot_candidate_plan",
-          getPromotionReport: "get_autopilot_promotion_report"
+          validateLoopSpec: "validate_loop_spec",
+          dryRunLoop: "dry_run_loop",
+          runLoop: "run_loop",
+          enqueueLoopTrigger: "enqueue_loop_trigger",
+          getLoopTriggerQueue: "get_loop_trigger_queue",
+          runNextLoopTrigger: "run_next_loop_trigger",
+          getLoopRunStatus: "get_loop_run_status",
+          getLoopRunEvidence: "get_loop_run_evidence",
+          getLoopRunEvents: "get_loop_run_events",
+          cancelLoopRun: "cancel_loop_run",
+          getLoopTelemetry: "get_loop_telemetry"
         },
         resources: true
       },
@@ -206,4 +234,3 @@ async function pathExists(path) {
     return false;
   }
 }
-

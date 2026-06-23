@@ -1,0 +1,154 @@
+{
+  "schema_version": "across-loop-spec/1.0",
+  "id": "daily-news-brief",
+  "name": "Daily News Brief and Video Draft",
+  "description": "Produce a cited daily digest and video-draft manifest from declared sources.",
+  "owner": {
+    "type": "local_user",
+    "id": "default"
+  },
+  "compatibility": {
+    "min_autopilot_version": ">=0.2.0",
+    "required_orchestrator": ">=0.7.0",
+    "required_context": ">=0.8.0",
+    "required_host": ">=0.9.0"
+  },
+  "required_capabilities": [
+    "source.rss",
+    "source.url",
+    "action.source_digest",
+    "output.video_draft_manifest",
+    "memory.pending_summary"
+  ],
+  "trigger": {
+    "type": "manual"
+  },
+  "scope": {
+    "project_id": "news-brief",
+    "workspace": "."
+  },
+  "autonomy": {
+    "level": 3,
+    "requires_human_approval_above": 3
+  },
+  "sources": [
+    {
+      "id": "fixture-news-1",
+      "type": "manual_input",
+      "adapter": "manual_input",
+      "title": "AI tooling release notes",
+      "content": "A local-first automation platform added stronger audit and approval controls."
+    },
+    {
+      "id": "fixture-news-2",
+      "type": "manual_input",
+      "adapter": "manual_input",
+      "title": "Open-source workflow engines",
+      "content": "Workflow engines continue to add human-in-the-loop safety gates and replayable evidence."
+    }
+  ],
+  "actions": {
+    "allowed": [
+      "file_read",
+      "web_search",
+      "source_digest",
+      "read_only_analysis",
+      "orchestrator_task_dispatch",
+      "quality_gate_evaluation",
+      "report_generation",
+      "write_pending_memory",
+      "local_file_write"
+    ],
+    "blocked": [
+      "merge_pr",
+      "release_publish",
+      "sign_artifact",
+      "write_secret",
+      "publish_video"
+    ]
+  },
+  "execute": {
+    "engine": "across-orchestrator",
+    "mode": "task"
+  },
+  "outputs": [
+    {
+      "type": "markdown_report",
+      "to": "run://news/brief.md",
+      "policy": "create"
+    },
+    {
+      "type": "json_artifact",
+      "to": "run://news/digest.json",
+      "policy": "overwrite"
+    },
+    {
+      "type": "media_storyboard",
+      "to": "run://news/storyboard.json",
+      "policy": "create"
+    },
+    {
+      "type": "video_draft_manifest",
+      "to": "run://news/video-draft.json",
+      "policy": "create"
+    },
+    {
+      "type": "context_memory",
+      "to": "context://pending",
+      "policy": "append"
+    }
+  ],
+  "gates": [
+    {
+      "id": "citations_present",
+      "required": true
+    },
+    {
+      "id": "no_raw_page_persistence",
+      "required": true
+    }
+  ],
+  "memory": {
+    "provider": "across-context",
+    "recall": true,
+    "remember": true,
+    "write_status": "pending"
+  },
+  "failure_policy": {
+    "max_retries": 1,
+    "retry_backoff": "linear",
+    "continue_on_gate_failure": false,
+    "dead_letter": "context_memory"
+  },
+  "sandbox": {
+    "filesystem": "run_scoped",
+    "network": "adapter_scoped",
+    "env": "minimal"
+  },
+  "evidence_contract": {
+    "schema_version": "across-loop-evidence/1.0",
+    "required_sections": ["sources", "actions", "gates", "outputs", "memory", "audit"]
+  },
+  "used_adapters": {
+    "sources": ["rss", "url", "directory", "manual_input"],
+    "actions": [
+      "source_digest",
+      "read_only_analysis",
+      "orchestrator_task_dispatch",
+      "quality_gate_evaluation",
+      "report_generation",
+      "memory_write_candidate"
+    ],
+    "outputs": [
+      "markdown_report",
+      "json_artifact",
+      "media_storyboard",
+      "video_draft_manifest",
+      "context_memory"
+    ]
+  },
+  "pack_config": {
+    "quotation_word_limit_per_source": 25,
+    "video_draft_only": true
+  }
+}

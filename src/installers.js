@@ -7,6 +7,7 @@ import { renderPluginManifest } from "./plugin-manifest.js";
 const HOST_PLUGIN_PACKAGE_ENTRIES = [
   "src",
   "sources",
+  "examples",
   "README.md",
   "AUTOPILOT_RFC.md",
   "LICENSE",
@@ -143,4 +144,3 @@ function containsProtectedUserReference(value, env) {
 function pathIsAtOrBelow(path, root) {
   return path === root || path.startsWith(`${root}/`);
 }
-
