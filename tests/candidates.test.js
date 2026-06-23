@@ -21,7 +21,7 @@ test("promotion report blocks missing required gates and allows complete evidenc
   const candidate = createCandidate({
     goal: "Improve docs",
     targetProduct: "across-agents-assistant",
-    targetVersion: "0.8.30",
+    targetVersion: "0.9.0",
     now: new Date("2026-06-20T00:00:00Z")
   });
   const partial = evaluateCandidate(candidate, [{ id: "unit_tests", status: "passed" }]);
@@ -38,7 +38,7 @@ test("promotion report blocks missing required gates and allows complete evidenc
   const report = buildPromotionReport(complete, defaultState(new Date("2026-06-19T00:00:00Z")).stable_slot);
 
   assert.equal(report.readiness, "ready");
-  assert.equal(report.rollback_target, "0.1.0");
+  assert.equal(report.rollback_target, "0.2.0");
   assert.equal(report.safety.candidate_cannot_self_approve, true);
   assert.equal(report.safety.auto_release_allowed, false);
 });

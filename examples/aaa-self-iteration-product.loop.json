@@ -1,0 +1,250 @@
+{
+  "schema_version": "across-loop-spec/1.0",
+  "id": "aaa-self-iteration-product",
+  "name": "AAA Self Iteration Product Candidate",
+  "description": "Use stable AAA as controller A to create and validate a four-repo B candidate with a real code-level AAA change.",
+  "owner": {
+    "type": "local_user",
+    "id": "default"
+  },
+  "compatibility": {
+    "min_autopilot_version": ">=0.2.0",
+    "required_orchestrator": ">=0.7.0",
+    "required_context": ">=0.8.0",
+    "required_host": ">=0.9.0"
+  },
+  "required_capabilities": [
+    "action.candidate_ecosystem_acquire",
+    "action.host_code_iteration",
+    "action.candidate_ecosystem_diff",
+    "action.candidate_ecosystem_validation",
+    "action.candidate_app_lifecycle",
+    "action.candidate_self_hosting_probe",
+    "action.semantic_alignment_review",
+    "output.markdown_report",
+    "memory.pending_summary"
+  ],
+  "trigger": {
+    "type": "manual"
+  },
+  "scope": {
+    "project_id": "across",
+    "workspace": "."
+  },
+  "autonomy": {
+    "level": 3,
+    "requires_human_approval_above": 3
+  },
+  "sources": [
+    {
+      "id": "stable-controller-context",
+      "type": "manual_input",
+      "adapter": "manual_input",
+      "title": "AAA self-iteration goal",
+      "content": "A stable AAA controller must modify only B candidate repositories, validate B, and keep A unchanged."
+    }
+  ],
+  "actions": {
+    "allowed": [
+      "file_read",
+      "git_read",
+      "candidate_ecosystem_acquire",
+      "host_code_iteration",
+      "candidate_ecosystem_diff",
+      "candidate_ecosystem_validation",
+      "candidate_app_lifecycle",
+      "candidate_self_hosting_probe",
+      "semantic_alignment_review",
+      "promotion_report_generation",
+      "quality_gate_evaluation",
+      "report_generation",
+      "write_pending_memory"
+    ],
+    "blocked": [
+      "merge_pr",
+      "release_publish",
+      "sign_artifact",
+      "write_secret"
+    ]
+  },
+  "execute": {
+    "engine": "across-orchestrator",
+    "mode": "task"
+  },
+  "outputs": [
+    {
+      "type": "markdown_report",
+      "to": "run://self-iteration/report.md",
+      "policy": "create"
+    },
+    {
+      "type": "json_artifact",
+      "to": "run://self-iteration/evidence.json",
+      "policy": "overwrite"
+    },
+    {
+      "type": "context_memory",
+      "to": "context://pending",
+      "policy": "append"
+    }
+  ],
+  "gates": [
+    {
+      "id": "four_repo_manifest_written",
+      "required": true
+    },
+    {
+      "id": "candidate_runtime_preflight_passed",
+      "required": true
+    },
+    {
+      "id": "candidate_b_has_code_diff",
+      "required": true
+    },
+    {
+      "id": "source_a_unchanged",
+      "required": true
+    },
+    {
+      "id": "candidate_ecosystem_validation_passed",
+      "required": true
+    },
+    {
+      "id": "candidate_app_lifecycle_passed",
+      "required": true
+    },
+    {
+      "id": "self_hosting_probe_passed_or_not_required",
+      "required": true
+    },
+    {
+      "id": "semantic_alignment_passed",
+      "required": true
+    },
+    {
+      "id": "promotion_report_ready",
+      "required": true
+    }
+  ],
+  "memory": {
+    "provider": "across-context",
+    "recall": true,
+    "remember": true,
+    "write_status": "pending"
+  },
+  "failure_policy": {
+    "max_retries": 0,
+    "retry_backoff": "linear",
+    "continue_on_gate_failure": false,
+    "dead_letter": "context_memory"
+  },
+  "sandbox": {
+    "filesystem": "run_scoped",
+    "network": "adapter_scoped",
+    "env": "minimal"
+  },
+  "evidence_contract": {
+    "schema_version": "across-loop-evidence/1.0",
+    "required_sections": ["sources", "actions", "gates", "outputs", "memory", "audit", "candidate"]
+  },
+  "used_adapters": {
+    "sources": ["manual_input"],
+    "actions": [
+      "candidate_ecosystem_acquire",
+      "host_code_iteration",
+      "candidate_ecosystem_diff",
+      "candidate_ecosystem_validation",
+      "candidate_app_lifecycle",
+      "candidate_self_hosting_probe",
+      "semantic_alignment_review",
+      "promotion_report_generation",
+      "quality_gate_evaluation",
+      "report_generation",
+      "memory_write_candidate"
+    ],
+    "outputs": ["markdown_report", "json_artifact", "context_memory"]
+  },
+  "pack_config": {
+    "target_repo": "across-agents-assistant",
+    "candidate_ecosystem": {
+      "mode": "snapshot",
+      "repos": []
+    },
+    "code_iteration": {
+      "goal": "Add a semantic candidate product quality helper for AAA promotion review. Implement evaluate_candidate_product_alignment(evidence: dict) in backend/src/across_agents_assistant/autopilot_candidate_quality.py plus a focused test. The helper should reject no-diff/self-proof-only candidates and return a review recommendation with blocking reasons.",
+      "allowed_patch_paths": [
+        "backend/src/across_agents_assistant/autopilot_candidate_quality.py",
+        "backend/tests/test_autopilot_candidate_quality.py"
+      ],
+      "context_files": [
+        "README.md",
+        "CANDIDATE_PRODUCT_PIPELINE_PLAN.md"
+      ],
+      "timeout_ms": 240000
+    },
+    "candidate_validation": {
+      "commands": [
+        {
+          "repo": "across-agents-assistant",
+          "command": "python3",
+          "args": ["-m", "py_compile", "backend/src/across_agents_assistant/autopilot_candidate_quality.py"],
+          "timeout_ms": 30000
+        },
+        {
+          "repo": "across-agents-assistant",
+          "command": "python3",
+          "args": [
+            "-c",
+            "import sys; sys.path.insert(0, 'backend/src'); from across_agents_assistant.autopilot_candidate_quality import evaluate_candidate_product_alignment; ok=evaluate_candidate_product_alignment({'changed_files':['backend/src/across_agents_assistant/autopilot_candidate_quality.py']}); bad=evaluate_candidate_product_alignment({'changed_files':['backend/src/across_agents_assistant/loop_engineering_candidate.py','backend/tests/test_loop_engineering_candidate.py']}); assert ok['promotion_recommendation'] == 'review'; assert bad['promotion_recommendation'] == 'reject'; assert bad['blocking_reasons']"
+          ],
+          "timeout_ms": 30000
+        }
+      ]
+    },
+    "candidate_app_lifecycle": {
+      "required": true,
+      "timeout_ms": 600000
+    },
+    "self_hosting_probe": {
+      "required": true,
+      "timeout_ms": 180000
+    },
+    "model_policy": {
+      "required": true,
+      "provider": "minimax",
+      "model": "MiniMax-M3",
+      "temperature": 0.2,
+      "max_tokens": 2200,
+      "direct_patches": true,
+      "allow_host_validation_repair_fallback": true,
+      "code_mode": "direct_patches"
+    },
+    "semantic_review": {
+      "require_model_backed": true,
+      "required_changed_path_prefixes": [
+        "across-agents-assistant/backend/src/across_agents_assistant/autopilot_candidate_quality.py",
+        "across-agents-assistant/backend/tests/test_autopilot_candidate_quality.py"
+      ],
+      "forbidden_changed_path_patterns": [
+        "loop_engineering_candidate.py",
+        "test_loop_engineering_candidate.py"
+      ],
+      "reject_self_proof_only": true,
+      "minimum_validation_commands": 2,
+      "required_summary_keywords": [
+        "semantic",
+        "quality"
+      ]
+    }
+  },
+  "model_policy": {
+    "required": true,
+    "provider": "minimax",
+    "model": "MiniMax-M3",
+    "temperature": 0.2,
+    "max_tokens": 2200,
+    "direct_patches": true,
+    "allow_host_validation_repair_fallback": true,
+    "code_mode": "direct_patches"
+  }
+}

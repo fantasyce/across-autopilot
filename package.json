@@ -1,6 +1,6 @@
 {
   "name": "@across/autopilot",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Controlled autonomous iteration controller for the Across ecosystem.",
   "type": "module",
   "bin": {
@@ -9,9 +9,13 @@
   "files": [
     "src",
     "sources",
+    "examples",
     "README.md",
     "AUTOPILOT_RFC.md",
-    "LICENSE"
+    "LICENSE",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md"
   ],
   "scripts": {
     "test": "node --test tests/*.test.js",
@@ -30,4 +34,3 @@
     "node": ">=20"
   }
 }
-
