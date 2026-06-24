@@ -1,5 +1,5 @@
 import { access, chmod, cp, mkdir, realpath, rm, rename, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { COMPONENT_ID, ecosystemBinDir, ecosystemHome, pluginRoot } from "./paths.js";
 import { renderPluginManifest } from "./plugin-manifest.js";
@@ -46,11 +46,11 @@ export async function installHostPlugin(options = {}) {
   }
 
   await mkdir(binDir, { recursive: true });
-  await writeFile(commandPath, `#!/bin/sh\nexec /usr/bin/env node ${shellQuote(join(installDir, "src", "cli.js"))} "$@"\n`, "utf8");
+  await writeFile(commandPath, renderNodeWrapper(commandPath, join(installDir, "src", "cli.js")), "utf8");
   await chmod(commandPath, 0o755);
   await writeFile(
     join(installDir, "manifest.json"),
-    `${JSON.stringify(await renderPluginManifest({ acrossHome, commandPath, installDir, sourceRoot }), null, 2)}\n`,
+    `${JSON.stringify(await renderPluginManifest({ acrossHome, commandPath, installDir, sourceRoot, publicPaths: true }), null, 2)}\n`,
     "utf8"
   );
 
@@ -113,6 +113,16 @@ async function realpathOrResolve(path) {
 
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`;
+}
+
+function renderNodeWrapper(commandPath, targetPath) {
+  const targetRelativePath = relative(dirname(commandPath), targetPath) || ".";
+  return [
+    "#!/bin/sh",
+    "SCRIPT_DIR=$(CDPATH= cd \"$(dirname \"$0\")\" && pwd)",
+    `exec /usr/bin/env node "$SCRIPT_DIR"/${shellQuote(targetRelativePath)} "$@"`,
+    ""
+  ].join("\n");
 }
 
 function assertHostPluginRuntimePathAllowed(name, value, env) {

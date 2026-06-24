@@ -15,8 +15,8 @@ Context:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.0`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.0` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.1`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.1` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
 
 Across Autopilot now provides the reusable Loop Engineering supervisor used by
@@ -37,6 +37,9 @@ the Across ecosystem:
   `model_policy`, Orchestrator requests the decision, and Autopilot applies only
   returned candidate-workspace patches.
 - Recall and pending memory writes through Across Context.
+- Generic agent-plugin contract validation, ecosystem roadmap reporting, and host
+  session supervision that can be embedded by AAA, Codex, Claude Desktop, Claude
+  CLI, or any other host.
 - CLI and MCP tools that can be embedded by AAA or any other host.
 - Evidence envelopes include section hashes, an audit-chain tip, and explicit
   planner/builder/validator/reviewer/supervisor role evidence.
@@ -173,5 +176,5 @@ files from a source checkout in product mode.
 | 4 | Merge/release low-risk patch work with release evidence |
 | 5 | Protocol/runtime/release automation after explicit policy approval |
 
-`v0.2.0` defaults to level 1. Higher autonomy levels remain policy-gated and
+`v0.2.1` defaults to level 1. Higher autonomy levels remain policy-gated and
 must be enabled by a host or operator that owns the merge/release decision.

@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { buildAgentPluginRunPlan, normalizeAgentPluginManifest } from "./agent-plugin-contract.js";
 import { buildCandidatePlan, buildPromotionReport, createCandidate, evaluateCandidate } from "./candidates.js";
+import { AdapterRegistry } from "./adapter-registry.js";
+import { buildAutopilotEcosystemRoadmap } from "./ecosystem-roadmap.js";
 import { installHostPlugin, uninstallHostPlugin } from "./installers.js";
 import { loadBuiltInSpecs } from "./loop-spec.js";
 import { renderHealth, renderPluginManifest, renderPluginStatus } from "./plugin-manifest.js";
@@ -137,6 +140,24 @@ async function main(argv) {
     return printPayload(await renderPluginStatus(commandOptions(parsed)), parsed);
   }
 
+  if (command === "ecosystem-roadmap") {
+    const parsed = parseArgs(rest);
+    const supervisor = new AutopilotSupervisor();
+    const agentPlugins = await loadAgentPluginManifests(parsed["agent-plugin-manifest"]);
+    return printPayload(
+      buildAutopilotEcosystemRoadmap({
+        registry: new AdapterRegistry(),
+        telemetry: await supervisor.telemetry(),
+        agentPlugins
+      }),
+      parsed
+    );
+  }
+
+  if (command === "agent-plugin") {
+    return handleAgentPluginCommand(rest);
+  }
+
   if (command === "health") {
     const parsed = parseArgs(rest);
     return printPayload(await renderHealth(commandOptions(parsed)), parsed);
@@ -203,6 +224,37 @@ async function handleAdapterCommand(args) {
   if (subcommand === "pause") return printPayload(await supervisor.setAdapterPaused(required(parsed["adapter-id"], "--adapter-id"), true), parsed);
   if (subcommand === "resume") return printPayload(await supervisor.setAdapterPaused(required(parsed["adapter-id"], "--adapter-id"), false), parsed);
   throw new Error(`Unknown adapter command: ${subcommand || ""}`);
+}
+
+async function handleAgentPluginCommand(args) {
+  const [subcommand, ...rest] = args;
+  const parsed = parseArgs(rest);
+  const manifest = await loadAgentPluginManifest(required(parsed.manifest, "--manifest"));
+  if (subcommand === "validate") return printPayload(normalizeAgentPluginManifest(manifest), parsed);
+  if (subcommand === "plan") {
+    return printPayload(
+      buildAgentPluginRunPlan({
+        manifest,
+        goal: parsed.goal || parsed.positionals.join(" "),
+        trigger: parsed.trigger || "manual"
+      }),
+      parsed
+    );
+  }
+  throw new Error(`Unknown agent-plugin command: ${subcommand || ""}`);
+}
+
+async function loadAgentPluginManifest(path) {
+  return JSON.parse(await readFile(resolve(path), "utf8"));
+}
+
+async function loadAgentPluginManifests(value) {
+  const paths = Array.isArray(value) ? value : value ? [value] : [];
+  const manifests = [];
+  for (const path of paths) {
+    manifests.push(await loadAgentPluginManifest(path));
+  }
+  return manifests;
 }
 
 function selectCandidate(state, candidateId) {
@@ -326,6 +378,10 @@ Commands:
   promotion-report [--candidate id] --json
   plugin-manifest --json
   plugin-status --json
+  ecosystem-roadmap --json
+  ecosystem-roadmap [--agent-plugin-manifest path] --json
+  agent-plugin validate --manifest path --json
+  agent-plugin plan --manifest path --goal text --json
   health --json
   install host-plugin --across-home path
   uninstall host-plugin --across-home path

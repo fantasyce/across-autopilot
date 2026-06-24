@@ -35,11 +35,15 @@ test("host-plugin install writes wrapper and manifest", async () => {
   const command = join(acrossHome, "bin", "across-autopilot");
   const after = JSON.parse((await exec(command, ["plugin-status", "--json"], { env })).stdout);
   const manifest = JSON.parse(await readFile(join(acrossHome, "plugins", "across-autopilot", "manifest.json"), "utf8"));
+  const wrapper = await readFile(command, "utf8");
 
   assert.equal(after.installed, true);
   assert.equal(after.available, true);
   assert.equal(after.candidateSlot, null);
   assert.equal(manifest.entrypoints.review.args[0], "review");
+  assert.match(wrapper, /\$SCRIPT_DIR/);
+  assert.match(wrapper, /\.\.\/plugins\/across-autopilot\/src\/cli\.js/);
+  assert.doesNotMatch(wrapper, new RegExp(acrossHome.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 
   await exec(command, ["uninstall", "host-plugin", "--across-home", acrossHome], { env });
   const uninstalled = JSON.parse((await exec("node", [cli, "plugin-status", "--json"], { env })).stdout);
