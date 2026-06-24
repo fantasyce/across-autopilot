@@ -1,5 +1,9 @@
 # Across Autopilot
 
+![Quality](https://github.com/fantasyce/across-autopilot/actions/workflows/quality.yml/badge.svg)
+![Security](https://github.com/fantasyce/across-autopilot/actions/workflows/security.yml/badge.svg)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+
 Across Autopilot is the controlled autonomous iteration controller for the
 Across ecosystem and for generic agent hosts that need bounded LoopSpec
 supervision.
@@ -161,6 +165,16 @@ node src/cli.js loop run-trigger --json
 node src/cli.js loop run --spec daily-news-brief --json
 node src/cli.js loop telemetry --json
 ```
+
+## Development Checks
+
+```bash
+npm ci
+bash scripts/check.sh
+```
+
+GitHub Quality and Security workflows run the same repository checks, CodeQL for
+the JavaScript source, and npm audit for package dependencies.
 
 Install as an Across managed host plugin:
 

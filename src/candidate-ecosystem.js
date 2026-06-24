@@ -2275,7 +2275,13 @@ async function copyGitSnapshot(source, target) {
     if (shouldExcludeSnapshotPath(safeRel)) continue;
     const src = ensureInside(source, resolve(source, safeRel));
     const dst = ensureInside(target, resolve(target, safeRel));
-    const info = await stat(src);
+    let info;
+    try {
+      info = await stat(src);
+    } catch (error) {
+      if (error.code === "ENOENT") continue;
+      throw error;
+    }
     if (!info.isFile()) continue;
     await mkdir(dirname(dst), { recursive: true });
     await copyFile(src, dst);
