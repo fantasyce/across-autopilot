@@ -11,7 +11,7 @@ export function defaultState(now = new Date()) {
     autonomy_level: 1,
     stable_slot: {
       slot: "stable",
-      version: "0.2.0",
+      version: "0.2.1",
       status: "active",
       promoted_at: now.toISOString(),
       source: "local",
@@ -101,4 +101,3 @@ function normalizeState(state) {
     candidates: Array.isArray(state.candidates) ? state.candidates : []
   };
 }
-

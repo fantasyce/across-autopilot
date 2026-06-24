@@ -25,6 +25,8 @@ export async function renderPluginManifest(options = {}) {
   const binDir = resolve(options.binDir || ecosystemBinDir(envWithHome));
   const installDir = resolve(options.installDir || join(pluginRootPath, COMPONENT_ID));
   const commandPath = resolve(options.commandPath || join(binDir, "across-autopilot"));
+  const publicPaths = options.publicPaths === true;
+  const manifestCommandPath = publicPaths ? userRelativeAcrossPath(commandPath, envWithHome) : commandPath;
   const packageJson = await readPackageJson(options.sourceRoot || PACKAGE_ROOT);
 
   return {
@@ -50,6 +52,8 @@ export async function renderPluginManifest(options = {}) {
       triggerQueue: true,
       triggerIdempotency: true,
       toolPackSchemas: true,
+      genericAgentPluginRuntime: true,
+      agentPluginTrustPolicy: true,
       externalEmbedding: true,
       ecosystemResearch: true,
       agentLoopExecutionDelegation: true,
@@ -83,7 +87,7 @@ export async function renderPluginManifest(options = {}) {
     lifecycle: {
       install: {
         hostManaged: true,
-        command: commandPath,
+        command: manifestCommandPath,
         args: ["install", "host-plugin"],
         idempotent: true
       },
@@ -97,31 +101,34 @@ export async function renderPluginManifest(options = {}) {
       },
       uninstall: {
         hostManaged: true,
-        command: commandPath,
+        command: manifestCommandPath,
         args: ["uninstall", "host-plugin"],
         removesRuntime: true,
         preservesData: true
       }
     },
     entrypoints: {
-      cli: { command: commandPath },
-      mcp: { command: commandPath, args: ["mcp"], transport: "stdio" },
-      status: { command: commandPath, args: ["plugin-status", "--json"] },
-      review: { command: commandPath, args: ["review", "--json"] },
-      candidatePlan: { command: commandPath, args: ["candidate-plan", "--json"] },
-      promotionReport: { command: commandPath, args: ["promotion-report", "--json"] },
-      loopValidate: { command: commandPath, args: ["loop", "validate", "--json"] },
-      loopRun: { command: commandPath, args: ["loop", "run", "--json"] },
-      loopEnqueueTrigger: { command: commandPath, args: ["loop", "enqueue-trigger", "--json"] },
-      loopTriggerQueue: { command: commandPath, args: ["loop", "trigger-queue", "--json"] },
-      loopRunTrigger: { command: commandPath, args: ["loop", "run-trigger", "--json"] },
-      loopStatus: { command: commandPath, args: ["loop", "status", "--json"] },
-      loopEvidence: { command: commandPath, args: ["loop", "evidence", "--json"] },
-      loopEvents: { command: commandPath, args: ["loop", "events", "--json"] },
-      loopTelemetry: { command: commandPath, args: ["loop", "telemetry", "--json"] }
+      cli: { command: manifestCommandPath },
+      mcp: { command: manifestCommandPath, args: ["mcp"], transport: "stdio" },
+      status: { command: manifestCommandPath, args: ["plugin-status", "--json"] },
+      review: { command: manifestCommandPath, args: ["review", "--json"] },
+      candidatePlan: { command: manifestCommandPath, args: ["candidate-plan", "--json"] },
+      promotionReport: { command: manifestCommandPath, args: ["promotion-report", "--json"] },
+      loopValidate: { command: manifestCommandPath, args: ["loop", "validate", "--json"] },
+      loopRun: { command: manifestCommandPath, args: ["loop", "run", "--json"] },
+      loopEnqueueTrigger: { command: manifestCommandPath, args: ["loop", "enqueue-trigger", "--json"] },
+      loopTriggerQueue: { command: manifestCommandPath, args: ["loop", "trigger-queue", "--json"] },
+      loopRunTrigger: { command: manifestCommandPath, args: ["loop", "run-trigger", "--json"] },
+      loopStatus: { command: manifestCommandPath, args: ["loop", "status", "--json"] },
+      loopEvidence: { command: manifestCommandPath, args: ["loop", "evidence", "--json"] },
+      loopEvents: { command: manifestCommandPath, args: ["loop", "events", "--json"] },
+      loopTelemetry: { command: manifestCommandPath, args: ["loop", "telemetry", "--json"] },
+      agentPluginValidate: { command: manifestCommandPath, args: ["agent-plugin", "validate", "--json"] },
+      agentPluginPlan: { command: manifestCommandPath, args: ["agent-plugin", "plan", "--json"] },
+      ecosystemRoadmap: { command: manifestCommandPath, args: ["ecosystem-roadmap", "--json"] }
     },
     protocols: {
-      cli: { command: commandPath },
+      cli: { command: manifestCommandPath },
       mcp: {
         transport: "stdio",
         tools: {
@@ -151,13 +158,13 @@ export async function renderPluginManifest(options = {}) {
       hostControlPlane: "across-agents-assistant"
     },
     paths: {
-      plugin: installDir,
-      bin: binDir,
-      data: componentDataHome(COMPONENT_ID, envWithHome),
-      config: componentConfigHome(COMPONENT_ID, envWithHome),
-      run: componentRunHome(COMPONENT_ID, envWithHome),
-      logs: componentLogHome(COMPONENT_ID, envWithHome),
-      cache: componentCacheHome(COMPONENT_ID, envWithHome)
+      plugin: publicPaths ? userRelativeAcrossPath(installDir, envWithHome) : installDir,
+      bin: publicPaths ? userRelativeAcrossPath(binDir, envWithHome) : binDir,
+      data: publicPaths ? userRelativeAcrossPath(componentDataHome(COMPONENT_ID, envWithHome), envWithHome) : componentDataHome(COMPONENT_ID, envWithHome),
+      config: publicPaths ? userRelativeAcrossPath(componentConfigHome(COMPONENT_ID, envWithHome), envWithHome) : componentConfigHome(COMPONENT_ID, envWithHome),
+      run: publicPaths ? userRelativeAcrossPath(componentRunHome(COMPONENT_ID, envWithHome), envWithHome) : componentRunHome(COMPONENT_ID, envWithHome),
+      logs: publicPaths ? userRelativeAcrossPath(componentLogHome(COMPONENT_ID, envWithHome), envWithHome) : componentLogHome(COMPONENT_ID, envWithHome),
+      cache: publicPaths ? userRelativeAcrossPath(componentCacheHome(COMPONENT_ID, envWithHome), envWithHome) : componentCacheHome(COMPONENT_ID, envWithHome)
     },
     environment: {
       ecosystemHome: "ACROSS_HOME",
@@ -166,6 +173,17 @@ export async function renderPluginManifest(options = {}) {
       binHome: "ACROSS_BIN_HOME"
     }
   };
+}
+
+function userRelativeAcrossPath(path, env) {
+  const home = resolve(env.HOME || process.env.HOME || "");
+  const defaultAcrossHome = resolve(home, ".across");
+  const resolved = resolve(path);
+  if (resolved === defaultAcrossHome) return "~/.across";
+  if (resolved.startsWith(`${defaultAcrossHome}/`)) {
+    return `~/.across/${resolved.slice(defaultAcrossHome.length + 1)}`;
+  }
+  return resolved;
 }
 
 export async function renderPluginStatus(options = {}) {

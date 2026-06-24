@@ -35,11 +35,11 @@ test("promotion report blocks missing required gates and allows complete evidenc
     { id: "e2e", status: "passed" },
     { id: "release_evidence", status: "passed" }
   ]);
-  const report = buildPromotionReport(complete, defaultState(new Date("2026-06-19T00:00:00Z")).stable_slot);
+  const stableSlot = defaultState(new Date("2026-06-19T00:00:00Z")).stable_slot;
+  const report = buildPromotionReport(complete, stableSlot);
 
   assert.equal(report.readiness, "ready");
-  assert.equal(report.rollback_target, "0.2.0");
+  assert.equal(report.rollback_target, stableSlot.version);
   assert.equal(report.safety.candidate_cannot_self_approve, true);
   assert.equal(report.safety.auto_release_allowed, false);
 });
-
