@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -112,6 +112,46 @@ test("candidate ecosystem receives a non-secret host model lease", async () => {
   assert.equal(leaseText.includes("must-not-be-written"), false);
   assert.equal(/api[_-]?key/i.test(leaseText), false);
   assert.equal(manifest.model_lease.lease_id, acquired.model_lease.lease_id);
+});
+
+test("candidate ecosystem snapshot skips deleted tracked files", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-deleted-tracked-"));
+  const sourceRoot = join(home, "sources");
+  const repos = [];
+  for (const id of ["across-agents-assistant", "across-orchestrator", "across-context"]) {
+    const source = join(sourceRoot, id);
+    await createGitSource(source, { "README.md": `# ${id}\n` });
+    repos.push({ id, source });
+  }
+  const autopilotSource = join(sourceRoot, "across-autopilot");
+  await createGitSource(autopilotSource, {
+    "README.md": "# Across Autopilot\n",
+    ".github/workflows/ci.yml": "name: CI\n",
+    "src/cli.js": "console.log('ok');\n"
+  });
+  await rm(join(autopilotSource, ".github/workflows/ci.yml"));
+  repos.push({ id: "across-autopilot", source: autopilotSource });
+
+  const result = await acquireCandidateEcosystem({
+    spec: {
+      id: "deleted-tracked-snapshot",
+      pack_config: {
+        candidate_ecosystem: {
+          repos
+        }
+      }
+    },
+    run: { run_id: "run-20260624T070000Z-deleted-tracked-snapshot" },
+    env: {
+      ...process.env,
+      ACROSS_HOME: home
+    }
+  });
+
+  const autopilotTarget = result.repos.find((repo) => repo.id === "across-autopilot").target;
+  assert.equal(await fileExists(join(autopilotTarget, "README.md")), true);
+  assert.equal(await fileExists(join(autopilotTarget, "src/cli.js")), true);
+  assert.equal(await fileExists(join(autopilotTarget, ".github/workflows/ci.yml")), false);
 });
 
 test("host code iteration receives candidate model lease without provider secrets", async () => {
