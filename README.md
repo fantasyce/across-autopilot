@@ -20,9 +20,13 @@ Context:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.2`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.2` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.3`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.3` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.3` adds the Autopilot Quality/Security GitHub workflows, including
+JavaScript CodeQL and npm audit coverage, so the plugin has the same repository
+health gates as the other AAA ecosystem modules.
 
 `v0.2.2` clarifies the generic host contract: Autopilot is not AAA-only.
 Codex, CloudCode Desktop, CloudCode CLI, Claude Desktop, Claude CLI, AAA, and
@@ -202,5 +206,5 @@ through `~/.across/plugins/across-autopilot` and
 | 4 | Merge/release low-risk patch work with release evidence |
 | 5 | Protocol/runtime/release automation after explicit policy approval |
 
-`v0.2.2` defaults to level 1. Higher autonomy levels remain policy-gated and
+`v0.2.3` defaults to level 1. Higher autonomy levels remain policy-gated and
 must be enabled by a host or operator that owns the merge/release decision.
