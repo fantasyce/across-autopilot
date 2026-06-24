@@ -1,7 +1,8 @@
 # Across Autopilot
 
 Across Autopilot is the controlled autonomous iteration controller for the
-Across ecosystem.
+Across ecosystem and for generic agent hosts that need bounded LoopSpec
+supervision.
 
 It does not replace Across Agents Assistant, Across Orchestrator, or Across
 Context:
@@ -15,9 +16,17 @@ Context:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.1`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.1` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.2`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.2` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.2` clarifies the generic host contract: Autopilot is not AAA-only.
+Codex, CloudCode Desktop, CloudCode CLI, Claude Desktop, Claude CLI, AAA, and
+other CLI/MCP-capable agent hosts can run Autopilot as a managed plugin under
+`~/.across`, provide model execution through a host-owned command boundary, and
+consume LoopSpec validation, trigger queue, run supervision, repair/retry
+evidence, and release-readiness reports without importing AAA code or reading a
+developer checkout.
 
 Across Autopilot now provides the reusable Loop Engineering supervisor used by
 the Across ecosystem:
@@ -38,8 +47,8 @@ the Across ecosystem:
   returned candidate-workspace patches.
 - Recall and pending memory writes through Across Context.
 - Generic agent-plugin contract validation, ecosystem roadmap reporting, and host
-  session supervision that can be embedded by AAA, Codex, Claude Desktop, Claude
-  CLI, or any other host.
+  session supervision that can be embedded by AAA, Codex, CloudCode
+  Desktop/CLI, Claude Desktop/CLI, or any other host.
 - CLI and MCP tools that can be embedded by AAA or any other host.
 - Evidence envelopes include section hashes, an audit-chain tip, and explicit
   planner/builder/validator/reviewer/supervisor role evidence.
@@ -162,8 +171,11 @@ node src/cli.js install host-plugin --across-home "$HOME/.across"
 ## Product Boundaries
 
 Autopilot is a fourth Across product. It should be consumed through CLI, MCP,
-plugin manifest, or host APIs. AAA should not import Autopilot implementation
-files from a source checkout in product mode.
+plugin manifest, or host APIs. AAA, Codex, CloudCode Desktop/CLI, Claude
+Desktop/CLI, and other product hosts should not import Autopilot implementation
+files from a source checkout in product mode. Managed installs should resolve
+through `~/.across/plugins/across-autopilot` and
+`~/.across/bin/across-autopilot`.
 
 ## Autonomy Levels
 
@@ -176,5 +188,5 @@ files from a source checkout in product mode.
 | 4 | Merge/release low-risk patch work with release evidence |
 | 5 | Protocol/runtime/release automation after explicit policy approval |
 
-`v0.2.1` defaults to level 1. Higher autonomy levels remain policy-gated and
+`v0.2.2` defaults to level 1. Higher autonomy levels remain policy-gated and
 must be enabled by a host or operator that owns the merge/release decision.
