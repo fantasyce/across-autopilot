@@ -899,7 +899,12 @@ function normalizeFixtureSource(source) {
 
 async function directoryRecords(root, maxFiles) {
   const files = [];
-  await walk(root, "", files, maxFiles);
+  const seen = new Set();
+  for (const rel of PRIORITY_SOURCE_FILES) {
+    if (files.length >= maxFiles) break;
+    await addFileRecord(root, rel, files, seen);
+  }
+  await walk(root, "", files, maxFiles, seen);
   return files;
 }
 
@@ -936,26 +941,75 @@ function safeSegment(value) {
   return String(value || "repo").replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "repo";
 }
 
-async function walk(root, rel, files, maxFiles) {
+const PRIORITY_SOURCE_FILES = Object.freeze([
+  "package.json",
+  "package-lock.json",
+  "pnpm-lock.yaml",
+  "yarn.lock",
+  "bun.lockb",
+  "pyproject.toml",
+  "requirements.txt",
+  "requirements-lock.txt",
+  "Pipfile.lock",
+  "Package.swift",
+  "Cargo.toml",
+  "go.mod",
+  "README.md",
+  "LICENSE",
+  "LICENSE.md",
+  "COPYING"
+]);
+
+const IGNORED_DIRECTORY_NAMES = new Set([
+  ".git",
+  ".pytest_cache",
+  ".venv",
+  "venv",
+  "node_modules",
+  "__pycache__",
+  "build",
+  "dist",
+  "DerivedData"
+]);
+
+async function walk(root, rel, files, maxFiles, seen = new Set()) {
   if (files.length >= maxFiles) return;
   const dir = join(root, rel);
   const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     if (files.length >= maxFiles) return;
-    if (entry.name === ".git" || entry.name === "node_modules") continue;
+    if (IGNORED_DIRECTORY_NAMES.has(entry.name)) continue;
     const nextRel = rel ? `${rel}/${entry.name}` : entry.name;
     const path = join(root, nextRel);
     if (entry.isDirectory()) {
-      await walk(root, nextRel, files, maxFiles);
+      await walk(root, nextRel, files, maxFiles, seen);
     } else if (entry.isFile()) {
-      const info = await stat(path);
-      const record = { path: nextRel, size: info.size };
-      if (info.size < 100_000 && /(\.json|\.md|\.toml|\.swift|\.txt|\.lock|\.yaml|LICENSE|package-lock\.json)$/i.test(entry.name)) {
-        record.content = await readFile(path, "utf8");
-      }
-      files.push(record);
+      await addFileRecord(root, nextRel, files, seen);
     }
   }
+}
+
+async function addFileRecord(root, rel, files, seen) {
+  if (seen.has(rel)) return;
+  const path = join(root, rel);
+  let info;
+  try {
+    info = await stat(path);
+  } catch {
+    return;
+  }
+  if (!info.isFile()) return;
+  seen.add(rel);
+  const record = { path: rel, size: info.size };
+  if (info.size < 100_000 && shouldReadSourceExcerpt(rel)) {
+    record.content = await readFile(path, "utf8");
+  }
+  files.push(record);
+}
+
+function shouldReadSourceExcerpt(rel) {
+  return /(^|\/)(LICENSE|COPYING|Package\.swift|Cargo\.toml|go\.mod|requirements(?:-lock)?\.txt|Pipfile\.lock|package(?:-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|pyproject\.toml|README\.md)$/i.test(rel)
+    || /(\.json|\.md|\.toml|\.swift|\.txt|\.lock|\.yaml)$/i.test(rel);
 }
 
 async function fetchUrlRecord(url, extra = {}) {

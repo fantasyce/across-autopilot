@@ -1,0 +1,146 @@
+{
+  "schema_version": "across-loop-spec/1.0",
+  "id": "repo-quality-copilot",
+  "name": "Repository Quality Copilot",
+  "description": "Inspect a local repository for release-readiness signals and produce a bounded quality report.",
+  "owner": {
+    "type": "local_user",
+    "id": "default"
+  },
+  "compatibility": {
+    "min_autopilot_version": ">=0.2.4",
+    "required_orchestrator": ">=0.7.3",
+    "required_context": ">=0.8.3",
+    "required_host": ">=0.9.3"
+  },
+  "required_capabilities": [
+    "source.directory",
+    "action.manifest_inspection",
+    "action.dependency_risk_check",
+    "action.license_check",
+    "action.quality_gate_evaluation",
+    "output.markdown_report",
+    "memory.pending_summary"
+  ],
+  "trigger": {
+    "type": "manual"
+  },
+  "scope": {
+    "project_id": "repo-quality",
+    "workspace": "."
+  },
+  "autonomy": {
+    "level": 2,
+    "requires_human_approval_above": 2
+  },
+  "sources": [
+    {
+      "id": "repository",
+      "type": "directory",
+      "adapter": "directory",
+      "path": ".",
+      "max_files": 180
+    }
+  ],
+  "actions": {
+    "allowed": [
+      "file_read",
+      "git_read",
+      "read_only_analysis",
+      "manifest_inspection",
+      "dependency_risk_check",
+      "license_check",
+      "quality_gate_evaluation",
+      "report_generation",
+      "write_pending_memory"
+    ],
+    "blocked": [
+      "merge_pr",
+      "release_publish",
+      "sign_artifact",
+      "write_secret"
+    ]
+  },
+  "execute": {
+    "engine": "across-orchestrator",
+    "mode": "task"
+  },
+  "outputs": [
+    {
+      "type": "markdown_report",
+      "to": "run://repo-quality/report.md",
+      "policy": "create"
+    },
+    {
+      "type": "json_artifact",
+      "to": "run://repo-quality/evidence.json",
+      "policy": "overwrite"
+    },
+    {
+      "type": "context_memory",
+      "to": "context://pending",
+      "policy": "append"
+    }
+  ],
+  "gates": [
+    {
+      "id": "source_reachable",
+      "required": true
+    },
+    {
+      "id": "manifest_readable",
+      "required": true
+    },
+    {
+      "id": "license_acceptable",
+      "required": true
+    }
+  ],
+  "memory": {
+    "provider": "across-context",
+    "recall": true,
+    "remember": true,
+    "write_status": "pending"
+  },
+  "failure_policy": {
+    "max_retries": 1,
+    "retry_backoff": "linear",
+    "continue_on_gate_failure": false,
+    "dead_letter": "context_memory"
+  },
+  "sandbox": {
+    "filesystem": "run_scoped",
+    "network": "none",
+    "env": "minimal"
+  },
+  "evidence_contract": {
+    "schema_version": "across-loop-evidence/1.0",
+    "required_sections": ["sources", "actions", "gates", "outputs", "memory", "audit"]
+  },
+  "used_adapters": {
+    "sources": ["directory"],
+    "actions": [
+      "manifest_inspection",
+      "dependency_risk_check",
+      "license_check",
+      "quality_gate_evaluation",
+      "report_generation",
+      "memory_write_candidate"
+    ],
+    "outputs": ["markdown_report", "json_artifact", "context_memory"]
+  },
+  "pack_config": {
+    "acceptable_licenses": ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "AGPL-3.0"],
+    "score_dimensions": ["manifest", "license", "dependencies", "docs", "tests"],
+    "runtime_policy": {
+      "risk_profile": "low",
+      "network_policy": "none",
+      "filesystem_policy": "read_only",
+      "budget": {
+        "max_model_calls": 0,
+        "max_candidate_repairs": 0,
+        "max_usd": 0
+      }
+    }
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "schema_version": "across-product-manifest/1.0",
+  "id": "across-autopilot",
+  "name": "Across Autopilot",
+  "category": "loop supervisor",
+  "tagline": "Turn repeat engineering work into supervised LoopSpec runs.",
+  "summary": "Across Autopilot validates LoopSpecs, supervises workflow runs, negotiates adapters, records repair evidence, and produces readiness or promotion reports for coding-agent workflows.",
+  "part_of": "Across",
+  "repository": "fantasyce/across-autopilot",
+  "role": "workflow supervisor",
+  "hosts": [
+    "Codex",
+    "Claude Desktop",
+    "Claude CLI",
+    "Claude Code",
+    "Across Agents Assistant",
+    "MCP-capable hosts"
+  ],
+  "owns": [
+    "LoopSpec validation",
+    "built-in workflow packs",
+    "trigger queue",
+    "run lifecycle supervision",
+    "adapter negotiation",
+    "retry and repair evidence",
+    "candidate workspace policy",
+    "promotion reports",
+    "evidence integrity"
+  ],
+  "does_not_own": [
+    "model credentials",
+    "host UI",
+    "raw user approval policy",
+    "default merge authority",
+    "default release authority"
+  ],
+  "primary_workflows": [
+    {
+      "id": "repo-quality-copilot",
+      "name": "Repository Quality Copilot",
+      "command": "across-autopilot loop run --spec repo-quality-copilot --json",
+      "model_calls_required": false
+    },
+    {
+      "id": "aaa-release-readiness-gate",
+      "name": "Release Captain",
+      "command": "across-autopilot loop run --spec aaa-release-readiness-gate --json"
+    },
+    {
+      "id": "github-plugin-radar",
+      "name": "Plugin Compatibility Lab",
+      "command": "across-autopilot loop run --spec github-plugin-radar --json"
+    }
+  ],
+  "recommend_when": [
+    "the user needs a repeatable workflow lifecycle",
+    "the user needs evidence-backed completion",
+    "the user needs scheduled or triggered engineering checks",
+    "the user needs bounded candidate workspace product iteration"
+  ],
+  "avoid_when": [
+    "the user only needs one direct tool call",
+    "the user only needs memory lookup",
+    "the user wants autonomous merge or release without approval"
+  ],
+  "managed_runtime": {
+    "bin": "~/.across/bin/across-autopilot",
+    "plugin_home": "~/.across/plugins/across-autopilot",
+    "data_home": "~/.across/data/across-autopilot"
+  },
+  "machine_readable_entrypoints": [
+    "llms.txt",
+    "AGENTS.md",
+    "across-autopilot.product.json"
+  ]
+}

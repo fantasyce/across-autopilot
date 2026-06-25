@@ -61,8 +61,9 @@ test("cli loop validation exposes built-in LoopSpec", async () => {
     "--json"
   ], { env })).stdout);
   const builtInIds = registry.built_in.map((spec) => spec.id);
-  assert.deepEqual(builtInIds.sort(), ["aaa-autonomous-self-iteration", "aaa-release-readiness-gate", "aaa-research-driven-self-iteration", "aaa-self-iteration-product", "daily-news-brief", "github-plugin-radar"]);
+  assert.deepEqual(builtInIds.sort(), ["aaa-autonomous-self-iteration", "aaa-release-readiness-gate", "aaa-research-driven-self-iteration", "aaa-self-iteration-product", "daily-news-brief", "github-plugin-radar", "repo-quality-copilot"]);
   assert.equal(registry.built_in.find((spec) => spec.id === "github-plugin-radar").title, "GitHub Plugin Radar");
+  assert.equal(registry.built_in.find((spec) => spec.id === "repo-quality-copilot").title, "Repository Quality Copilot");
   assert.equal(registry.built_in.some((spec) => spec.spec), false);
   assert.equal(Array.isArray(registry.registered), true);
 
