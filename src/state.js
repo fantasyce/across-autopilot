@@ -11,7 +11,7 @@ export function defaultState(now = new Date()) {
     autonomy_level: 1,
     stable_slot: {
       slot: "stable",
-      version: "0.2.3",
+      version: "0.2.4",
       status: "active",
       promoted_at: now.toISOString(),
       source: "local",

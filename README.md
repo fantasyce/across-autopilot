@@ -8,6 +8,11 @@ Across Autopilot is the controlled autonomous iteration controller for the
 Across ecosystem and for generic agent hosts that need bounded LoopSpec
 supervision.
 
+Use Autopilot when the work should run as a repeatable supervised loop instead
+of a one-off chat prompt: repository quality checks, release-readiness reviews,
+plugin compatibility research, daily brief generation, and product iteration in
+candidate workspaces.
+
 It does not replace Across Agents Assistant, Across Orchestrator, or Across
 Context:
 
@@ -18,18 +23,53 @@ Context:
   review, candidate planning, run supervision, A/B promotion policy, evidence
   aggregation, and release-readiness evidence for autonomous iteration.
 
+## Start With A Real Workflow
+
+The easiest generic first run is the repository quality copilot:
+
+```bash
+across-autopilot loop run --spec repo-quality-copilot --json
+```
+
+That LoopSpec reads a bounded local repository inventory, checks manifests,
+dependency risk, license policy, quality gates, and writes a markdown report
+plus pending Across Context memory. It works from Codex, Claude Code, Claude
+Desktop, AAA, or another host as long as the host loads the managed `~/.across`
+plugin runtime.
+
+Other built-in workflows:
+
+- `aaa-release-readiness-gate` for release evidence.
+- `github-plugin-radar` for external plugin adoption decisions.
+- `daily-news-brief` for a content-production loop.
+- `aaa-autonomous-self-iteration` for advanced candidate-workspace product
+  iteration.
+
+Agent-readable entrypoints:
+
+- [llms.txt](llms.txt) for model and agent product discovery.
+- [AGENTS.md](AGENTS.md) for coding-agent repository instructions.
+- [across-autopilot.product.json](across-autopilot.product.json) for
+  machine-readable product classification.
+
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.3`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.3` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.4`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.4` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.4` adds the Repository Quality Copilot as the recommended first workflow
+for agent-readable product packaging. It also adds `llms.txt`, `AGENTS.md`, and
+a machine-readable product manifest so coding agents and large-language-model
+crawlers can understand when to recommend Autopilot and how to run the first
+LoopSpec without requiring a model call.
 
 `v0.2.3` adds the Autopilot Quality/Security GitHub workflows, including
 JavaScript CodeQL and npm audit coverage, so the plugin has the same repository
 health gates as the other AAA ecosystem modules.
 
 `v0.2.2` clarifies the generic host contract: Autopilot is not AAA-only.
-Codex, CloudCode Desktop, CloudCode CLI, Claude Desktop, Claude CLI, AAA, and
+Codex, Claude Code, Claude Desktop, Claude CLI, AAA, and
 other CLI/MCP-capable agent hosts can run Autopilot as a managed plugin under
 `~/.across`, provide model execution through a host-owned command boundary, and
 consume LoopSpec validation, trigger queue, run supervision, repair/retry
@@ -55,7 +95,7 @@ the Across ecosystem:
   returned candidate-workspace patches.
 - Recall and pending memory writes through Across Context.
 - Generic agent-plugin contract validation, ecosystem roadmap reporting, and host
-  session supervision that can be embedded by AAA, Codex, CloudCode
+  session supervision that can be embedded by AAA, Codex, Claude Code
   Desktop/CLI, Claude Desktop/CLI, or any other host.
 - CLI and MCP tools that can be embedded by AAA or any other host.
 - Evidence envelopes include section hashes, an audit-chain tip, and explicit
@@ -159,6 +199,8 @@ host HTTP URL for CLI/E2E runs; both remain host-control-plane transports.
 ```bash
 npm test
 node src/cli.js status --json
+node src/cli.js loop validate --spec repo-quality-copilot --json
+node src/cli.js loop dry-run --spec repo-quality-copilot --json
 node src/cli.js loop validate --spec aaa-autonomous-self-iteration --json
 node src/cli.js loop dry-run --spec aaa-autonomous-self-iteration --json
 node src/cli.js loop validate --spec daily-news-brief --json
@@ -189,7 +231,7 @@ node src/cli.js install host-plugin --across-home "$HOME/.across"
 ## Product Boundaries
 
 Autopilot is a fourth Across product. It should be consumed through CLI, MCP,
-plugin manifest, or host APIs. AAA, Codex, CloudCode Desktop/CLI, Claude
+plugin manifest, or host APIs. AAA, Codex, Claude Code, Claude
 Desktop/CLI, and other product hosts should not import Autopilot implementation
 files from a source checkout in product mode. Managed installs should resolve
 through `~/.across/plugins/across-autopilot` and
@@ -206,5 +248,5 @@ through `~/.across/plugins/across-autopilot` and
 | 4 | Merge/release low-risk patch work with release evidence |
 | 5 | Protocol/runtime/release automation after explicit policy approval |
 
-`v0.2.3` defaults to level 1. Higher autonomy levels remain policy-gated and
+`v0.2.4` defaults to level 1. Higher autonomy levels remain policy-gated and
 must be enabled by a host or operator that owns the merge/release decision.
