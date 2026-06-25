@@ -10,9 +10,8 @@
   "role": "workflow supervisor",
   "hosts": [
     "Codex",
-    "Claude Desktop",
-    "Claude CLI",
     "Claude Code",
+    "Claude Desktop",
     "Across Agents Assistant",
     "MCP-capable hosts"
   ],
