@@ -33,8 +33,7 @@ across-autopilot loop run --spec repo-quality-copilot --json
 
 That LoopSpec reads a bounded local repository inventory, checks manifests,
 dependency risk, license policy, quality gates, and writes a markdown report
-plus pending Across Context memory. It works from Codex, Claude Code, Claude
-Desktop, AAA, or another host as long as the host loads the managed `~/.across`
+plus pending Across Context memory. It works from Codex, Claude Code, Claude Desktop, AAA, or another host as long as the host loads the managed `~/.across`
 plugin runtime.
 
 Other built-in workflows:
@@ -54,9 +53,14 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.4`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.4` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.5`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.5` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.5` is the final 1.1 regression cleanup release for generic host
+compatibility. It keeps the LoopSpec and runtime contracts unchanged, and
+updates public positioning around Codex, Claude Code, Claude Desktop, AAA, and
+other hosts that load the managed `~/.across` plugin runtime.
 
 `v0.2.4` adds the Repository Quality Copilot as the recommended first workflow
 for agent-readable product packaging. It also adds `llms.txt`, `AGENTS.md`, and
@@ -69,7 +73,7 @@ JavaScript CodeQL and npm audit coverage, so the plugin has the same repository
 health gates as the other AAA ecosystem modules.
 
 `v0.2.2` clarifies the generic host contract: Autopilot is not AAA-only.
-Codex, Claude Code, Claude Desktop, Claude CLI, AAA, and
+Codex, Claude Code, Claude Desktop, AAA, and
 other CLI/MCP-capable agent hosts can run Autopilot as a managed plugin under
 `~/.across`, provide model execution through a host-owned command boundary, and
 consume LoopSpec validation, trigger queue, run supervision, repair/retry
@@ -95,8 +99,7 @@ the Across ecosystem:
   returned candidate-workspace patches.
 - Recall and pending memory writes through Across Context.
 - Generic agent-plugin contract validation, ecosystem roadmap reporting, and host
-  session supervision that can be embedded by AAA, Codex, Claude Code
-  Desktop/CLI, Claude Desktop/CLI, or any other host.
+  session supervision that can be embedded by AAA, Codex, Claude Code, Claude Desktop, or any other host.
 - CLI and MCP tools that can be embedded by AAA or any other host.
 - Evidence envelopes include section hashes, an audit-chain tip, and explicit
   planner/builder/validator/reviewer/supervisor role evidence.
@@ -231,8 +234,7 @@ node src/cli.js install host-plugin --across-home "$HOME/.across"
 ## Product Boundaries
 
 Autopilot is a fourth Across product. It should be consumed through CLI, MCP,
-plugin manifest, or host APIs. AAA, Codex, Claude Code, Claude
-Desktop/CLI, and other product hosts should not import Autopilot implementation
+plugin manifest, or host APIs. AAA, Codex, Claude Code, Claude Desktop, and other product hosts should not import Autopilot implementation
 files from a source checkout in product mode. Managed installs should resolve
 through `~/.across/plugins/across-autopilot` and
 `~/.across/bin/across-autopilot`.
@@ -248,5 +250,5 @@ through `~/.across/plugins/across-autopilot` and
 | 4 | Merge/release low-risk patch work with release evidence |
 | 5 | Protocol/runtime/release automation after explicit policy approval |
 
-`v0.2.4` defaults to level 1. Higher autonomy levels remain policy-gated and
+`v0.2.5` defaults to level 1. Higher autonomy levels remain policy-gated and
 must be enabled by a host or operator that owns the merge/release decision.
