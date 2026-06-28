@@ -55,7 +55,7 @@ test("mcp server exposes generic agent plugin validation and planning", async ()
   };
 
   try {
-    const responsesPromise = readMcpResponses(child, 6);
+    const responsesPromise = readMcpResponses(child, 9);
     child.stdin.write(`${JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
@@ -78,6 +78,24 @@ test("mcp server exposes generic agent plugin validation and planning", async ()
       method: "tools/call",
       params: { name: "plan_agent_plugin_run", arguments: { manifest, goal: "Echo from MCP", trigger: "mcp-test" } }
     })}\n`);
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: "2.0",
+      id: 7,
+      method: "tools/call",
+      params: { name: "export_workflow_pack", arguments: { pack: "plugin-compatibility-lab-v2" } }
+    })}\n`);
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: "2.0",
+      id: 8,
+      method: "tools/call",
+      params: { name: "get_workflow_pack_trust_receipt", arguments: { pack: "plugin-compatibility-lab-v2" } }
+    })}\n`);
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: "2.0",
+      id: 9,
+      method: "tools/call",
+      params: { name: "get_workflow_pack_frontier_interop", arguments: { pack: "plugin-compatibility-lab-v2" } }
+    })}\n`);
     const responses = await responsesPromise;
 
     assert.equal(responses[0].result.serverInfo.name, "Across Autopilot");
@@ -87,6 +105,11 @@ test("mcp server exposes generic agent plugin validation and planning", async ()
     assert.ok(responses[3].result.tools.some((tool) => tool.name === "validate_agent_plugin"));
     assert.ok(responses[3].result.tools.some((tool) => tool.name === "plan_agent_plugin_run"));
     assert.ok(responses[3].result.tools.some((tool) => tool.name === "supervise_agent_plugin_session"));
+    assert.ok(responses[3].result.tools.some((tool) => tool.name === "export_workflow_pack"));
+    assert.ok(responses[3].result.tools.some((tool) => tool.name === "get_workflow_pack_product_card"));
+    assert.ok(responses[3].result.tools.some((tool) => tool.name === "get_workflow_pack_protocol_readiness"));
+    assert.ok(responses[3].result.tools.some((tool) => tool.name === "get_workflow_pack_trust_receipt"));
+    assert.ok(responses[3].result.tools.some((tool) => tool.name === "get_workflow_pack_frontier_interop"));
     const tools = new Map(responses[3].result.tools.map((tool) => [tool.name, tool]));
     const validateManifest = tools.get("validate_agent_plugin").inputSchema.properties.manifest;
     const planManifest = tools.get("plan_agent_plugin_run").inputSchema.properties.manifest;
@@ -124,6 +147,18 @@ test("mcp server exposes generic agent plugin validation and planning", async ()
     assert.equal(plan.host_completion_contract.schema_version, "across-host-completion-contract/1.0");
     assert.equal(plan.host_completion_contract.supervision.owner, "across-autopilot");
     assert.equal(plan.evidence_contract.required.includes("host_completion_contract"), true);
+    const workflowPack = JSON.parse(responses[6].result.content[0].text);
+    assert.equal(workflowPack.schema_version, "across-workflow-pack-host-exports/1.0");
+    assert.equal(workflowPack.product_card.schema_version, "across-workflow-pack-product-card/1.0");
+    assert.equal(workflowPack.trust_receipt.schema_version, "across-agent-team-trust-receipt/1.0");
+    assert.equal(workflowPack.frontier_interop.schema_version, "across-workflow-pack-frontier-interop/1.0");
+    assert.equal(workflowPack.hosts.codex.type, "codex-plugin-task");
+    assert.equal(workflowPack.hosts.claude_code.type, "claude-code-skill-or-mcp-task");
+    const trustReceipt = JSON.parse(responses[7].result.content[0].text);
+    assert.equal(trustReceipt.schema_version, "across-agent-team-trust-receipt/1.0");
+    const frontierInterop = JSON.parse(responses[8].result.content[0].text);
+    assert.equal(frontierInterop.schema_version, "across-workflow-pack-frontier-interop/1.0");
+    assert.equal(frontierInterop.remote_mcp.transport, "streamable_http");
   } finally {
     child.kill();
   }

@@ -3,6 +3,8 @@ import { EVIDENCE_SCHEMA, normalizeRuntimePolicy } from "./loop-spec.js";
 import { stableJson } from "./json-utils.js";
 import { buildRoleEvidence } from "./roles.js";
 
+export const EVIDENCE_GRAPH_SCHEMA = "across-evidence-graph/1.0";
+
 export function buildEvidenceEnvelope({ spec, run, sources = [], actions = [], gates = [], outputs = [], memory = {}, risks = [], audit = [], failure = null }) {
   const orchestratorTasks = actions
     .filter((action) => action.adapter === "orchestrator_task_dispatch")
@@ -48,9 +50,92 @@ export function buildEvidenceEnvelope({ spec, run, sources = [], actions = [], g
     failure,
     audit
   };
-  return {
+  const evidenceGraph = buildEvidenceGraph(envelope);
+  const envelopeWithGraph = {
     ...envelope,
-    integrity: buildEvidenceIntegrity(envelope)
+    evidence_graph: evidenceGraph
+  };
+  return {
+    ...envelopeWithGraph,
+    integrity: buildEvidenceIntegrity(envelopeWithGraph)
+  };
+}
+
+export function buildEvidenceGraph(envelope = {}) {
+  const nodes = [];
+  const edges = [];
+  const addNode = (node) => {
+    if (!node?.id || nodes.some((item) => item.id === node.id)) return;
+    nodes.push({
+      ...node,
+      hash: node.hash || sha256(stableJson(node.payload ?? node.label ?? node.id))
+    });
+  };
+  const addEdge = (from, to, relation) => {
+    if (!from || !to) return;
+    edges.push({ from, to, relation });
+  };
+  const runNode = `run:${envelope.run_id || "unknown"}`;
+  const specNode = `spec:${envelope.spec_id || "unknown"}`;
+  addNode({ id: specNode, type: "spec", label: envelope.spec_id || "unknown", status: "declared", payload: { spec_id: envelope.spec_id } });
+  addNode({ id: runNode, type: "run", label: envelope.run_id || "unknown", status: envelope.status || "unknown", payload: { run_id: envelope.run_id, status: envelope.status } });
+  addEdge(specNode, runNode, "executes");
+  addNode({ id: `${runNode}:runtime-policy`, type: "runtime_policy", label: "Runtime policy", status: "declared", payload: envelope.runtime_policy || {} });
+  addEdge(runNode, `${runNode}:runtime-policy`, "uses_policy");
+  for (const source of envelope.sources || []) {
+    const id = `source:${source.id || source.adapter || nodes.length}`;
+    addNode({ id, type: "source", label: source.id || source.adapter || "source", status: source.status || "unknown", payload: source });
+    addEdge(runNode, id, "reads");
+  }
+  for (const [index, action] of (envelope.actions || []).entries()) {
+    const id = `action:${action.id || action.adapter || index}`;
+    addNode({ id, type: "action", label: action.adapter || action.id || "action", status: action.status || "unknown", payload: action });
+    addEdge(runNode, id, "runs");
+    for (const source of envelope.sources || []) {
+      addEdge(`source:${source.id || source.adapter}`, id, "informs");
+    }
+  }
+  for (const gate of envelope.gates || []) {
+    const id = `gate:${gate.id || nodes.length}`;
+    addNode({ id, type: "gate", label: gate.id || "gate", status: gate.status || "unknown", payload: gate });
+    addEdge(runNode, id, "validates");
+    for (const ref of gate.evidence_refs || []) addEdge(refToNode(ref), id, "supports");
+  }
+  for (const output of envelope.outputs || []) {
+    const id = `output:${output.id || nodes.length}`;
+    addNode({ id, type: "output", label: output.id || "output", status: output.status || "unknown", payload: output });
+    addEdge(runNode, id, "writes");
+  }
+  for (const [index, item] of (envelope.memory?.written || []).entries()) {
+    const id = `memory:written:${item.memory_id || item.id || index}`;
+    addNode({ id, type: "memory", label: item.memory_id || item.id || "pending-memory", status: item.status || "pending", payload: item });
+    addEdge(runNode, id, "remembers");
+  }
+  if (envelope.runtime_budget) {
+    const id = `${runNode}:runtime-budget`;
+    addNode({ id, type: "runtime_budget", label: "Runtime budget", status: envelope.runtime_budget.status || "unknown", payload: envelope.runtime_budget });
+    addEdge(runNode, id, "enforces");
+  }
+  if (envelope.failure) {
+    const id = `${runNode}:failure`;
+    addNode({ id, type: "failure", label: envelope.failure.code || "failure", status: "failed", payload: envelope.failure });
+    addEdge(runNode, id, "failed_with");
+  }
+  return {
+    schema_version: EVIDENCE_GRAPH_SCHEMA,
+    run_id: envelope.run_id || null,
+    spec_id: envelope.spec_id || null,
+    status: envelope.status || "unknown",
+    nodes,
+    edges,
+    summary: {
+      node_count: nodes.length,
+      edge_count: edges.length,
+      source_count: (envelope.sources || []).length,
+      action_count: (envelope.actions || []).length,
+      gate_count: (envelope.gates || []).length,
+      output_count: (envelope.outputs || []).length
+    }
   };
 }
 
@@ -243,6 +328,7 @@ function buildEvidenceIntegrity(envelope) {
     gates: envelope.gates,
     outputs: envelope.outputs,
     memory: envelope.memory,
+    evidence_graph: envelope.evidence_graph,
     risks: envelope.risks,
     failure: envelope.failure
   };
@@ -356,6 +442,13 @@ function buildAuditChain(audit) {
     event_count: count,
     chain_tip: previous
   };
+}
+
+function refToNode(ref) {
+  const text = String(ref || "");
+  if (text.startsWith("sources/")) return `source:${text.slice("sources/".length)}`;
+  if (text.startsWith("actions/")) return `action:${text.slice("actions/".length)}`;
+  return text;
 }
 
 function sha256(text) {

@@ -25,7 +25,22 @@ Context:
 
 ## Start With A Real Workflow
 
-The easiest generic first run is the repository quality copilot:
+The clearest agent-team workflow is Plugin Compatibility Lab v2:
+
+```bash
+across-autopilot workflow-pack export --pack plugin-compatibility-lab-v2 --json
+across-autopilot workflow-pack protocol-readiness --pack plugin-compatibility-lab-v2 --json
+across-autopilot workflow-pack trust-receipt --pack plugin-compatibility-lab-v2 --json
+across-autopilot workflow-pack frontier-interop --pack plugin-compatibility-lab-v2 --json
+across-autopilot loop run --spec plugin-compatibility-lab-v2 --json
+```
+
+Use it before a team adopts an MCP server, coding-agent plugin, or external
+agent tool. The workflow gives Codex, Claude Code, MCP-capable hosts, A2A-style
+hosts, and Across the same task card, honest protocol-readiness matrix, trust
+receipt, and evidence contract.
+
+For a simpler repository-only smoke, run the repository quality copilot:
 
 ```bash
 across-autopilot loop run --spec repo-quality-copilot --json
@@ -53,9 +68,14 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.5`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.5` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.6`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.6` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.6` is the workflow-pack and frontier-interop release. It adds packaged
+Repository Quality / Plugin Compatibility workflows, host exports with product
+cards, protocol readiness, trust receipts, remote MCP/A2A metadata, and stronger
+agent-plugin validation for generic hosts.
 
 `v0.2.5` is the final 1.1 regression cleanup release for generic host
 compatibility. It keeps the LoopSpec and runtime contracts unchanged, and
@@ -250,5 +270,5 @@ through `~/.across/plugins/across-autopilot` and
 | 4 | Merge/release low-risk patch work with release evidence |
 | 5 | Protocol/runtime/release automation after explicit policy approval |
 
-`v0.2.5` defaults to level 1. Higher autonomy levels remain policy-gated and
+`v0.2.6` defaults to level 1. Higher autonomy levels remain policy-gated and
 must be enabled by a host or operator that owns the merge/release decision.

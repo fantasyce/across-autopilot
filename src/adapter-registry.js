@@ -19,6 +19,7 @@ import { FAILURE_CODES, LoopFailure } from "./failures.js";
 import { asArray, stableJson, unique } from "./json-utils.js";
 import { listToolPacks } from "./tool-packs.js";
 import { roleForAdapter } from "./roles.js";
+import { renderWorkflowPackHostExports, workflowPackForLoopSpec } from "./workflow-packs.js";
 
 const exec = promisify(execFile);
 
@@ -77,9 +78,11 @@ export class AdapterRegistry {
       "memory.pending_summary",
       "runtime.capability_preflight",
       "runtime.evidence_integrity",
+      "runtime.evidence_graph",
       "runtime.promotion_attestation",
       "runtime.role_orchestration",
       "runtime.runtime_policy",
+      "runtime.workflow_pack_registry",
       "runtime.tool_pack_registry",
       "runtime.trigger_queue"
     ];
@@ -102,7 +105,7 @@ export function registerBuiltIns(registry) {
   for (const id of ["file", "directory", "url", "rss", "github_repo", "github_search", "package_registry", "manual_input"]) {
     registry.registerSource(sourceAdapter(id));
   }
-  for (const id of ["read_only_analysis", "source_digest", "compatibility_scoring", "license_check", "manifest_inspection", "dependency_risk_check", "candidate_ecosystem_acquire", "product_iteration_strategy", "host_code_iteration", "candidate_ecosystem_diff", "candidate_ecosystem_validation", "candidate_app_lifecycle", "candidate_self_hosting_probe", "semantic_alignment_review", "candidate_workspace_patch", "candidate_diff_summary", "candidate_validation", "promotion_report_generation", "report_generation", "orchestrator_task_dispatch", "quality_gate_evaluation", "memory_write_candidate"]) {
+  for (const id of ["read_only_analysis", "source_digest", "workflow_pack_export", "compatibility_scoring", "license_check", "manifest_inspection", "dependency_risk_check", "candidate_ecosystem_acquire", "product_iteration_strategy", "host_code_iteration", "candidate_ecosystem_diff", "candidate_ecosystem_validation", "candidate_app_lifecycle", "candidate_self_hosting_probe", "semantic_alignment_review", "candidate_workspace_patch", "candidate_diff_summary", "candidate_validation", "promotion_report_generation", "report_generation", "orchestrator_task_dispatch", "quality_gate_evaluation", "memory_write_candidate"]) {
     registry.registerAction(actionAdapter(id));
   }
   for (const id of ["markdown_report", "json_artifact", "context_memory", "local_file", "github_issue_draft", "pull_request_draft", "media_storyboard", "video_draft_manifest"]) {
@@ -195,6 +198,7 @@ function actionAdapter(id) {
 async function runAction(id, context) {
   if (id === "read_only_analysis") return readOnlyAnalysis(context);
   if (id === "source_digest") return sourceDigest(context);
+  if (id === "workflow_pack_export") return workflowPackExport(context);
   if (id === "license_check") return licenseCheck(context);
   if (id === "manifest_inspection") return manifestInspection(context);
   if (id === "dependency_risk_check") return dependencyRisk(context);
@@ -253,6 +257,29 @@ function sourceDigest({ sources, recalledMemory }) {
     digest: titles.map((title) => ({ title, summary: `Source reviewed: ${title}` })),
     recalled_memory_count: recalledMemory.length,
     source_count: sources.length
+  };
+}
+
+function workflowPackExport({ spec }) {
+  const pack = workflowPackForLoopSpec(spec);
+  if (!pack) {
+    return {
+      status: "attention",
+      pack_id: spec.pack_config?.workflow_pack_id || spec.id,
+      missing: true,
+      host_exports: null,
+      summary: "No workflow pack is registered for this LoopSpec."
+    };
+  }
+  const hostExports = renderWorkflowPackHostExports(pack);
+  return {
+    status: hostExports.status,
+    pack_id: pack.id,
+    loop_spec_id: pack.loop_spec_id,
+    host_targets: hostExports.host_targets,
+    missing_capabilities: hostExports.missing_capabilities,
+    host_exports: hostExports,
+    summary: `${pack.title} exports ${hostExports.host_targets.length} host targets.`
   };
 }
 
@@ -729,6 +756,8 @@ function reportGeneration({ spec, sources, actions, gates }) {
     if (result.selected_target_id) details.push(`selected: ${result.selected_target_id}`);
     if (result.selected_iteration?.target_repo) details.push(`target repo: ${result.selected_iteration.target_repo}`);
     if (result.manifest_count !== undefined) details.push(`manifests: ${result.manifest_count}`);
+    if (result.pack_id) details.push(`pack: ${result.pack_id}`);
+    if (Array.isArray(result.host_targets)) details.push(`hosts: ${result.host_targets.join(", ")}`);
     if (result.task?.loop_id || result.task?.task_id) details.push(`loop: ${result.task.loop_id || result.task.task_id}`);
     if (result.task?.model_backed) details.push(`model: ${result.task.model_decision?.provider || "host"}/${result.task.model_decision?.model || "unknown"}`);
     if (result.changed_file_count !== undefined) details.push(`changed files: ${result.changed_file_count}`);
@@ -845,6 +874,10 @@ function evaluateGate(gate, { sources, actions }) {
     const score = actions.find((action) => action.adapter === "compatibility_scoring");
     passed = Boolean(score?.result?.rationale);
     reason = passed ? "Recommendation includes rationale." : "Recommendation rationale missing.";
+  } else if (id === "workflow_pack_exports_ready") {
+    const exportAction = actions.find((action) => action.adapter === "workflow_pack_export");
+    passed = exportAction?.status === "passed" && Array.isArray(exportAction?.result?.host_targets) && exportAction.result.host_targets.length >= 5;
+    reason = passed ? "Workflow pack exports cover Codex, Claude Code, MCP, A2A, and AAA." : "Workflow pack host exports are missing or incomplete.";
   } else if (id === "citations_present") {
     passed = sources.length > 0;
     reason = passed ? "Sources provide citation anchors." : "No citation sources present.";
