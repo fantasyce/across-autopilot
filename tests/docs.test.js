@@ -6,7 +6,8 @@ test("README documents conformance/autonomous split and tool pack policy", async
   const readme = await readFile("README.md", "utf8");
 
   for (const anchor of [
-    "LOOP_ENGINEERING_REFERENCE_ARCHITECTURE.md",
+    "AAA's public entrypoints",
+    "OPEN_SOURCE_RELEASE_HANDBOOK.md",
     "Conformance LoopSpecs",
     "Autonomous product LoopSpecs",
     "aaa-autonomous-self-iteration",
@@ -31,7 +32,8 @@ test("RFC points future work at the reference architecture", async () => {
   const rfc = await readFile("AUTOPILOT_RFC.md", "utf8");
 
   for (const anchor of [
-    "LOOP_ENGINEERING_REFERENCE_ARCHITECTURE.md",
+    "AAA host context lives in AAA's public entrypoints",
+    "across.product.json",
     "fixed candidate plans",
     "fuzzy external ecosystem topics",
     "admitted by Autopilot policy",
