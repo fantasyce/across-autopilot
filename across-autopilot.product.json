@@ -7,6 +7,12 @@
   "summary": "Across Autopilot validates LoopSpecs, supervises workflow runs, negotiates adapters, records repair evidence, and produces readiness or promotion reports for coding-agent workflows.",
   "part_of": "Across",
   "repository": "fantasyce/across-autopilot",
+  "current_release": {
+    "version": "v0.2.6",
+    "published_at": "2026-06-28",
+    "tag": "v0.2.6",
+    "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.2.6"
+  },
   "role": "workflow supervisor",
   "hosts": [
     "Codex",
