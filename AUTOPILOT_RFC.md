@@ -1,8 +1,10 @@
 # Across Autopilot RFC
 
 Status note: this RFC is a short product summary. The authoritative current
-architecture is AAA's `LOOP_ENGINEERING_REFERENCE_ARCHITECTURE.md`. When this
-RFC is less specific, follow the reference architecture.
+AAA host context lives in AAA's public entrypoints: `README.md`, `AGENTS.md`,
+`llms.txt`, `across.product.json`, and `OPEN_SOURCE_RELEASE_HANDBOOK.md`. When
+this RFC is less specific, follow those product entrypoints and Autopilot's
+machine-readable product manifest.
 
 ## Objective
 

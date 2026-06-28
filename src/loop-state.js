@@ -7,6 +7,12 @@ import { listToolPacks, toolPackIdsForTarget } from "./tool-packs.js";
 
 export const LOOP_STATE_SCHEMA = "across-autopilot-loop-state/1.0";
 
+export const AAA_PRODUCT_CONTEXT_FILES = Object.freeze([
+  "README.md",
+  "AGENTS.md",
+  "across.product.json"
+]);
+
 export const CONFORMANCE_TARGET_BLUEPRINTS = Object.freeze([
   {
     id: "tool_pack_policy",
@@ -17,11 +23,7 @@ export const CONFORMANCE_TARGET_BLUEPRINTS = Object.freeze([
       "backend/src/across_agents_assistant/autopilot_tool_pack_policy.py",
       "backend/tests/test_autopilot_tool_pack_policy.py"
     ],
-    context_files: [
-      "LOOP_ENGINEERING_REFERENCE_ARCHITECTURE.md",
-      "LOOP_ENGINEERING_PLATFORM_PLAN.md",
-      "CANDIDATE_PRODUCT_PIPELINE_PLAN.md"
-    ],
+    context_files: [...AAA_PRODUCT_CONTEXT_FILES],
     validation_commands: [
       {
         repo: "across-agents-assistant",
@@ -71,11 +73,7 @@ export const CONFORMANCE_TARGET_BLUEPRINTS = Object.freeze([
       "backend/src/across_agents_assistant/autopilot_loop_contract_policy.py",
       "backend/tests/test_autopilot_loop_contract_policy.py"
     ],
-    context_files: [
-      "LOOP_ENGINEERING_REFERENCE_ARCHITECTURE.md",
-      "LOOP_ENGINEERING_PLATFORM_PLAN.md",
-      "CANDIDATE_PRODUCT_PIPELINE_PLAN.md"
-    ],
+    context_files: [...AAA_PRODUCT_CONTEXT_FILES],
     validation_commands: [
       {
         repo: "across-agents-assistant",
@@ -125,11 +123,7 @@ export const CONFORMANCE_TARGET_BLUEPRINTS = Object.freeze([
       "backend/src/across_agents_assistant/autopilot_reviewer_policy.py",
       "backend/tests/test_autopilot_reviewer_policy.py"
     ],
-    context_files: [
-      "LOOP_ENGINEERING_REFERENCE_ARCHITECTURE.md",
-      "LOOP_ENGINEERING_PLATFORM_ACCEPTANCE.md",
-      "CANDIDATE_PRODUCT_PIPELINE_PLAN.md"
-    ],
+    context_files: [...AAA_PRODUCT_CONTEXT_FILES],
     validation_commands: [
       {
         repo: "across-agents-assistant",

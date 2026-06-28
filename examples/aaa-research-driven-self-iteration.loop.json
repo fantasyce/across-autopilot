@@ -221,8 +221,8 @@
           ],
           "context_files": [
             "README.md",
-            "LOOP_ENGINEERING_PLATFORM_PLAN.md",
-            "CANDIDATE_PRODUCT_PIPELINE_PLAN.md"
+            "AGENTS.md",
+            "across.product.json"
           ],
           "validation_commands": [
             {
@@ -277,8 +277,8 @@
           ],
           "context_files": [
             "README.md",
-            "LOOP_ENGINEERING_FINAL_TEST_REPORT.md",
-            "CANDIDATE_PRODUCT_PIPELINE_PLAN.md"
+            "AGENTS.md",
+            "across.product.json"
           ],
           "validation_commands": [
             {

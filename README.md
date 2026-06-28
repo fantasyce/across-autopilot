@@ -68,9 +68,14 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.6`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.6` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.7`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.7` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.7` removes stale AAA planning-document dependencies from Autopilot's
+default candidate context, examples, and RFC text. AAA candidate work now uses
+the public product entrypoints that are intended to stay published:
+`README.md`, `AGENTS.md`, and `across.product.json`.
 
 `v0.2.6` is the workflow-pack and frontier-interop release. It adds packaged
 Repository Quality / Plugin Compatibility workflows, host exports with product
@@ -124,11 +129,11 @@ the Across ecosystem:
 - Evidence envelopes include section hashes, an audit-chain tip, and explicit
   planner/builder/validator/reviewer/supervisor role evidence.
 
-Architecture baseline: AAA's
-`LOOP_ENGINEERING_REFERENCE_ARCHITECTURE.md` is the current reference for the
-Across Loop Engineering platform. Autopilot implements that architecture as the
-Loop platform layer, but it does not replace AAA's host capability registry or
-plugin management.
+Architecture baseline: AAA's public entrypoints (`README.md`, `AGENTS.md`,
+`llms.txt`, `across.product.json`, and `OPEN_SOURCE_RELEASE_HANDBOOK.md`) are
+the current references for the Across Loop Engineering platform. Autopilot
+implements the Loop supervision layer, but it does not replace AAA's host
+capability registry or plugin management.
 
 Important distinction:
 
@@ -270,5 +275,5 @@ through `~/.across/plugins/across-autopilot` and
 | 4 | Merge/release low-risk patch work with release evidence |
 | 5 | Protocol/runtime/release automation after explicit policy approval |
 
-`v0.2.6` defaults to level 1. Higher autonomy levels remain policy-gated and
+`v0.2.7` defaults to level 1. Higher autonomy levels remain policy-gated and
 must be enabled by a host or operator that owns the merge/release decision.

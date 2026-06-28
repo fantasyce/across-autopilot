@@ -1175,11 +1175,12 @@ test("stable controller creates four-repo B candidate and B proves C probe", asy
   await createGitSource(aaaSource, {
     ".gitignore": "build/\nmacOS-Client/.build/\n",
     "README.md": "# AAA Source\n",
+    "AGENTS.md": "# AAA Agent Instructions\n",
+    "across.product.json": "{}\n",
     "backend/src/across_agents_assistant/__init__.py": "",
     "build/ignored-artifact.txt": "must not enter B\n",
     "backend/tests/.keep": ""
   });
-  await writeFile(join(aaaSource, "CANDIDATE_PRODUCT_PIPELINE_PLAN.md"), "# Candidate Plan\n", "utf8");
   await createGitSource(orchestratorSource, { "README.md": "# Orchestrator Source\n" });
   await createGitSource(contextSource, { "README.md": "# Context Source\n" });
 
@@ -1323,7 +1324,7 @@ console.log(JSON.stringify({
     assert.equal(evidence.actions.find((action) => action.adapter === "semantic_alignment_review").status, "passed");
     const acquire = evidence.actions.find((action) => action.adapter === "candidate_ecosystem_acquire").result;
     const aaaCandidate = acquire.repos.find((repo) => repo.id === "across-agents-assistant").target;
-    assert.equal(await fileExists(join(aaaCandidate, "CANDIDATE_PRODUCT_PIPELINE_PLAN.md")), true);
+    assert.equal(await fileExists(join(aaaCandidate, "AGENTS.md")), true);
     assert.equal(await fileExists(join(aaaCandidate, "build", "ignored-artifact.txt")), false);
     assert.equal(await readFile(join(aaaSource, "README.md"), "utf8"), "# AAA Source\n");
   } finally {
@@ -1340,8 +1341,8 @@ test("research-driven self-iteration selects a target before mutating B", async 
   await createGitSource(aaaSource, {
     ".gitignore": "build/\n",
     "README.md": "# AAA Source\n",
-    "LOOP_ENGINEERING_PLATFORM_PLAN.md": "# Loop Platform\n",
-    "CANDIDATE_PRODUCT_PIPELINE_PLAN.md": "# Candidate Plan\n",
+    "AGENTS.md": "# AAA Agent Instructions\n",
+    "across.product.json": "{}\n",
     "backend/src/across_agents_assistant/__init__.py": "",
     "backend/tests/.keep": ""
   });
@@ -1478,9 +1479,8 @@ test("autonomous self-iteration builds dynamic backlog and independent reviewer 
   await createGitSource(aaaSource, {
     ".gitignore": "build/\n",
     "README.md": "# AAA Source\n",
-    "LOOP_ENGINEERING_REFERENCE_ARCHITECTURE.md": "# Reference Architecture\nTool Pack Registry\nLoop Contract\nIndependent Reviewer\n",
-    "LOOP_ENGINEERING_PLATFORM_PLAN.md": "# Loop Platform\n",
-    "CANDIDATE_PRODUCT_PIPELINE_PLAN.md": "# Candidate Plan\n",
+    "AGENTS.md": "# AAA Agent Instructions\nTool Pack Registry\nLoop Contract\nIndependent Reviewer\n",
+    "across.product.json": "{}\n",
     "backend/src/across_agents_assistant/__init__.py": "",
     "backend/tests/.keep": ""
   });
@@ -1504,7 +1504,7 @@ const generated = [
       "backend/src/across_agents_assistant/autopilot_tool_pack_policy.py",
       "backend/tests/test_autopilot_tool_pack_policy.py"
     ],
-    context_files: ["LOOP_ENGINEERING_REFERENCE_ARCHITECTURE.md"],
+    context_files: ["AGENTS.md"],
     validation_commands: [
       { repo: "across-agents-assistant", command: "python3", args: ["-m", "py_compile", "backend/src/across_agents_assistant/autopilot_tool_pack_policy.py", "backend/tests/test_autopilot_tool_pack_policy.py"], timeout_ms: 30000 },
       { repo: "across-agents-assistant", command: "python3", args: ["-c", "import sys, runpy; sys.path.insert(0, 'backend/src'); ns=runpy.run_path('backend/tests/test_autopilot_tool_pack_policy.py'); tests=[v for k,v in ns.items() if k.startswith('test_') and callable(v)]; assert tests; [test() for test in tests]"], timeout_ms: 30000 }
@@ -1854,8 +1854,8 @@ test("validation failure triggers bounded host code repair", async () => {
   await createGitSource(aaaSource, {
     ".gitignore": "build/\n",
     "README.md": "# AAA Source\n",
-    "LOOP_ENGINEERING_PLATFORM_PLAN.md": "# Loop Platform\n",
-    "CANDIDATE_PRODUCT_PIPELINE_PLAN.md": "# Candidate Plan\n",
+    "AGENTS.md": "# AAA Agent Instructions\n",
+    "across.product.json": "{}\n",
     "backend/src/across_agents_assistant/__init__.py": "",
     "backend/tests/.keep": ""
   });

@@ -178,7 +178,8 @@
       ],
       "context_files": [
         "README.md",
-        "CANDIDATE_PRODUCT_PIPELINE_PLAN.md"
+        "AGENTS.md",
+        "across.product.json"
       ],
       "timeout_ms": 240000
     },
