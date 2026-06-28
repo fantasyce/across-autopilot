@@ -1,0 +1,167 @@
+{
+  "schema_version": "across-loop-spec/1.0",
+  "id": "plugin-compatibility-lab-v2",
+  "name": "Plugin Compatibility Lab v2",
+  "description": "Validate that a generic agent plugin can expose one workflow pack to Codex, Claude Code, MCP, A2A, and AAA without host-specific mutation assumptions.",
+  "owner": {
+    "type": "local_user",
+    "id": "default"
+  },
+  "compatibility": {
+    "min_autopilot_version": ">=0.2.6",
+    "required_orchestrator": ">=0.7.6",
+    "required_context": ">=0.8.6",
+    "required_host": ">=0.9.5"
+  },
+  "required_capabilities": [
+    "source.directory",
+    "action.workflow_pack_export",
+    "action.manifest_inspection",
+    "action.dependency_risk_check",
+    "action.license_check",
+    "action.compatibility_scoring",
+    "action.quality_gate_evaluation",
+    "output.markdown_report",
+    "output.json_artifact",
+    "memory.pending_summary"
+  ],
+  "trigger": {
+    "type": "manual"
+  },
+  "scope": {
+    "project_id": "plugin-compatibility-lab",
+    "workspace": "."
+  },
+  "autonomy": {
+    "level": 2,
+    "requires_human_approval_above": 2
+  },
+  "sources": [
+    {
+      "id": "plugin-repository",
+      "type": "directory",
+      "adapter": "directory",
+      "path": ".",
+      "max_files": 220
+    }
+  ],
+  "actions": {
+    "allowed": [
+      "file_read",
+      "git_read",
+      "read_only_analysis",
+      "workflow_pack_export",
+      "manifest_inspection",
+      "dependency_risk_check",
+      "license_check",
+      "compatibility_scoring",
+      "quality_gate_evaluation",
+      "report_generation",
+      "write_pending_memory"
+    ],
+    "blocked": [
+      "merge_pr",
+      "release_publish",
+      "sign_artifact",
+      "write_secret"
+    ]
+  },
+  "execute": {
+    "engine": "across-orchestrator",
+    "mode": "task"
+  },
+  "outputs": [
+    {
+      "type": "markdown_report",
+      "to": "run://plugin-compatibility-lab/report.md",
+      "policy": "create"
+    },
+    {
+      "type": "json_artifact",
+      "to": "run://plugin-compatibility-lab/evidence.json",
+      "policy": "overwrite"
+    },
+    {
+      "type": "context_memory",
+      "to": "context://pending",
+      "policy": "append"
+    }
+  ],
+  "gates": [
+    {
+      "id": "source_reachable",
+      "required": true
+    },
+    {
+      "id": "workflow_pack_exports_ready",
+      "required": true
+    },
+    {
+      "id": "manifest_readable",
+      "required": true
+    },
+    {
+      "id": "license_acceptable",
+      "required": true
+    },
+    {
+      "id": "recommendation_has_rationale",
+      "required": true
+    }
+  ],
+  "memory": {
+    "provider": "across-context",
+    "recall": true,
+    "remember": true,
+    "write_status": "pending"
+  },
+  "failure_policy": {
+    "max_retries": 1,
+    "retry_backoff": "linear",
+    "continue_on_gate_failure": false,
+    "dead_letter": "context_memory"
+  },
+  "sandbox": {
+    "filesystem": "run_scoped",
+    "network": "none",
+    "env": "minimal"
+  },
+  "evidence_contract": {
+    "schema_version": "across-loop-evidence/1.0",
+    "required_sections": ["sources", "actions", "gates", "outputs", "memory", "audit", "evidence_graph"]
+  },
+  "used_adapters": {
+    "sources": ["directory"],
+    "actions": [
+      "workflow_pack_export",
+      "manifest_inspection",
+      "dependency_risk_check",
+      "license_check",
+      "compatibility_scoring",
+      "quality_gate_evaluation",
+      "report_generation",
+      "memory_write_candidate"
+    ],
+    "outputs": ["markdown_report", "json_artifact", "context_memory"]
+  },
+  "pack_config": {
+    "workflow_pack_id": "plugin-compatibility-lab-v2",
+    "interop_targets": ["codex", "claude_code", "mcp", "a2a", "across"],
+    "acceptable_licenses": ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC"],
+    "minimum_score": 60,
+    "runtime_policy": {
+      "risk_profile": "low",
+      "network_policy": "none",
+      "filesystem_policy": "read_only",
+      "budget": {
+        "max_model_calls": 0,
+        "max_candidate_repairs": 0,
+        "max_usd": 0
+      },
+      "promotion": {
+        "human_approval_required": true,
+        "merge_release_signing_blocked": true
+      }
+    }
+  }
+}

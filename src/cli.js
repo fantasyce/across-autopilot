@@ -5,12 +5,22 @@ import { buildAgentPluginRunPlan, normalizeAgentPluginManifest } from "./agent-p
 import { buildCandidatePlan, buildPromotionReport, createCandidate, evaluateCandidate } from "./candidates.js";
 import { AdapterRegistry } from "./adapter-registry.js";
 import { buildAutopilotEcosystemRoadmap } from "./ecosystem-roadmap.js";
-import { installHostPlugin, uninstallHostPlugin } from "./installers.js";
+import { installAgentHost, installHostPlugin, uninstallHostPlugin } from "./installers.js";
 import { loadBuiltInSpecs } from "./loop-spec.js";
 import { renderHealth, renderPluginManifest, renderPluginStatus } from "./plugin-manifest.js";
 import { buildReview, fetchSourceStatuses, loadSources, writeReview } from "./review.js";
 import { latestCandidate, loadState, recordCandidate, saveState } from "./state.js";
 import { AutopilotSupervisor } from "./supervisor.js";
+import {
+  listWorkflowPacks,
+  loadWorkflowPack,
+  renderWorkflowPackHostExports,
+  renderWorkflowPackFrontierInterop,
+  renderWorkflowPackProductCard,
+  renderWorkflowPackProtocolReadiness,
+  renderWorkflowPackTrustReceipt,
+  validateWorkflowPack
+} from "./workflow-packs.js";
 
 async function main(argv) {
   const [command, ...rest] = argv;
@@ -30,6 +40,15 @@ async function main(argv) {
 
   if (command === "adapter") {
     return handleAdapterCommand(rest);
+  }
+
+  if (command === "workflow-packs") {
+    const parsed = parseArgs(rest);
+    return printPayload(listWorkflowPacks(), parsed);
+  }
+
+  if (command === "workflow-pack") {
+    return handleWorkflowPackCommand(rest);
   }
 
   if (command === "review") {
@@ -168,6 +187,26 @@ async function main(argv) {
     return printPayload(await installHostPlugin(commandOptions(parsed)), parsed);
   }
 
+  if (command === "install") {
+    const [target, ...installRest] = rest;
+    const parsed = parseArgs(installRest);
+    const result = await installAgentHost(required(target, "install target"), {
+      configFile: parsed["config-file"],
+      acrossHome: parsed["across-home"],
+      pluginRoot: parsed["plugin-root"],
+      binDir: parsed["bin-dir"],
+      env: process.env
+    });
+    if (parsed.json) {
+      return printPayload(result, parsed);
+    }
+    if (parsed.stdout || result.command) {
+      console.log(result.command || JSON.stringify(result, null, 2));
+      return;
+    }
+    return printPayload(result, parsed);
+  }
+
   if (command === "uninstall" && rest[0] === "host-plugin") {
     const parsed = parseArgs(rest.slice(1));
     return printPayload(await uninstallHostPlugin(commandOptions(parsed)), parsed);
@@ -224,6 +263,19 @@ async function handleAdapterCommand(args) {
   if (subcommand === "pause") return printPayload(await supervisor.setAdapterPaused(required(parsed["adapter-id"], "--adapter-id"), true), parsed);
   if (subcommand === "resume") return printPayload(await supervisor.setAdapterPaused(required(parsed["adapter-id"], "--adapter-id"), false), parsed);
   throw new Error(`Unknown adapter command: ${subcommand || ""}`);
+}
+
+async function handleWorkflowPackCommand(args) {
+  const [subcommand, ...rest] = args;
+  const parsed = parseArgs(rest);
+  const pack = await loadWorkflowPack(required(parsed.pack || parsed.positionals[0], "--pack"));
+  if (subcommand === "validate") return printPayload(validateWorkflowPack(pack), parsed);
+  if (subcommand === "export") return printPayload(renderWorkflowPackHostExports(pack), parsed);
+  if (subcommand === "product-card") return printPayload(renderWorkflowPackProductCard(pack), parsed);
+  if (subcommand === "protocol-readiness") return printPayload(renderWorkflowPackProtocolReadiness(pack), parsed);
+  if (subcommand === "trust-receipt") return printPayload(renderWorkflowPackTrustReceipt(pack), parsed);
+  if (subcommand === "frontier-interop") return printPayload(renderWorkflowPackFrontierInterop(pack), parsed);
+  throw new Error(`Unknown workflow-pack command: ${subcommand || ""}`);
 }
 
 async function handleAgentPluginCommand(args) {
@@ -368,6 +420,13 @@ Commands:
   loop telemetry --json
   loop pause --spec-id id --json
   loop resume --spec-id id --json
+  workflow-packs --json
+  workflow-pack validate --pack id-or-path --json
+  workflow-pack export --pack id-or-path --json
+  workflow-pack product-card --pack id-or-path --json
+  workflow-pack protocol-readiness --pack id-or-path --json
+  workflow-pack trust-receipt --pack id-or-path --json
+  workflow-pack frontier-interop --pack id-or-path --json
   adapter pause --adapter-id id --json
   adapter resume --adapter-id id --json
   status --json
@@ -384,6 +443,7 @@ Commands:
   agent-plugin plan --manifest path --goal text --json
   health --json
   install host-plugin --across-home path
+  install <codex-mcp|claude-code|claude-desktop> [--stdout] [--config-file path]
   uninstall host-plugin --across-home path
   mcp
 `);

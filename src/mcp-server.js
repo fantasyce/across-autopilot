@@ -5,6 +5,16 @@ import { buildAgentPluginRunPlan, normalizeAgentPluginManifest } from "./agent-p
 import { superviseAgentPluginSession } from "./host-session-supervisor.js";
 import { AutopilotSupervisor } from "./supervisor.js";
 import { loadState } from "./state.js";
+import {
+  listWorkflowPacks,
+  loadWorkflowPack,
+  renderWorkflowPackFrontierInterop,
+  renderWorkflowPackHostExports,
+  renderWorkflowPackProductCard,
+  renderWorkflowPackProtocolReadiness,
+  renderWorkflowPackTrustReceipt,
+  validateWorkflowPack
+} from "./workflow-packs.js";
 
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
   console.log("Usage: across-autopilot mcp");
@@ -207,7 +217,7 @@ async function handleLine(line) {
         },
         serverInfo: {
           name: "Across Autopilot",
-          version: "0.2.5"
+          version: "0.2.6"
         }
       });
     }
@@ -277,6 +287,13 @@ async function handleLine(line) {
           { name: "get_loop_run_evidence", description: "Get loop run evidence envelope." },
           { name: "get_loop_run_events", description: "Get loop run audit events." },
           { name: "cancel_loop_run", description: "Cancel a loop run." },
+          { name: "list_workflow_packs", description: "List built-in Across workflow packs for generic agent hosts." },
+          { name: "validate_workflow_pack", description: "Validate an Across workflow pack." },
+          { name: "export_workflow_pack", description: "Render host-specific exports for Codex, Claude Code, MCP, A2A, and AAA." },
+          { name: "get_workflow_pack_product_card", description: "Return the user-facing product task card for a Workflow Pack." },
+          { name: "get_workflow_pack_protocol_readiness", description: "Return honest protocol maturity for MCP, A2A, remote MCP, evidence, and Context handoff." },
+          { name: "get_workflow_pack_trust_receipt", description: "Return the agent-team trust receipt template required before adoption or promotion." },
+          { name: "get_workflow_pack_frontier_interop", description: "Return remote MCP/OAuth, A2A delegation, and OTel/eval export contracts for a Workflow Pack." },
           { name: "list_loop_specs", description: "List registered and built-in LoopSpecs." },
           { name: "list_loop_runs", description: "List loop runs." },
           { name: "migrate_loop_spec", description: "Migrate and validate a LoopSpec." },
@@ -327,6 +344,13 @@ async function handleLine(line) {
       if (name === "get_loop_run_evidence") return respondText(id, await supervisor.evidence(required(args.run_id)));
       if (name === "get_loop_run_events") return respondText(id, await supervisor.events(required(args.run_id), { afterSequence: args.after_sequence }));
       if (name === "cancel_loop_run") return respondText(id, await supervisor.cancel(required(args.run_id), args.reason || "cancelled"));
+      if (name === "list_workflow_packs") return respondText(id, listWorkflowPacks());
+      if (name === "validate_workflow_pack") return respondText(id, validateWorkflowPack(await loadWorkflowPack(required(args.pack))));
+      if (name === "export_workflow_pack") return respondText(id, renderWorkflowPackHostExports(await loadWorkflowPack(required(args.pack))));
+      if (name === "get_workflow_pack_product_card") return respondText(id, renderWorkflowPackProductCard(await loadWorkflowPack(required(args.pack))));
+      if (name === "get_workflow_pack_protocol_readiness") return respondText(id, renderWorkflowPackProtocolReadiness(await loadWorkflowPack(required(args.pack))));
+      if (name === "get_workflow_pack_trust_receipt") return respondText(id, renderWorkflowPackTrustReceipt(await loadWorkflowPack(required(args.pack))));
+      if (name === "get_workflow_pack_frontier_interop") return respondText(id, renderWorkflowPackFrontierInterop(await loadWorkflowPack(required(args.pack))));
       if (name === "list_loop_specs") return respondText(id, await supervisor.store.loadRegistry());
       if (name === "list_loop_runs") return respondText(id, await supervisor.listRuns());
       if (name === "migrate_loop_spec") return respondText(id, (await supervisor.validateSpec(required(args.spec))).migration);

@@ -12,6 +12,7 @@ export const BUILT_IN_SPEC_PATHS = Object.freeze({
   "aaa-self-iteration-product": join(PACKAGE_ROOT, "examples", "aaa-self-iteration-product.loop.json"),
   "aaa-research-driven-self-iteration": join(PACKAGE_ROOT, "examples", "aaa-research-driven-self-iteration.loop.json"),
   "aaa-release-readiness-gate": join(PACKAGE_ROOT, "examples", "aaa-release-readiness-gate.loop.json"),
+  "plugin-compatibility-lab-v2": join(PACKAGE_ROOT, "examples", "plugin-compatibility-lab-v2.loop.json"),
   "repo-quality-copilot": join(PACKAGE_ROOT, "examples", "repo-quality-copilot.loop.json"),
   "github-plugin-radar": join(PACKAGE_ROOT, "examples", "github-plugin-radar.loop.json"),
   "daily-news-brief": join(PACKAGE_ROOT, "examples", "daily-news-brief.loop.json")
@@ -30,6 +31,7 @@ const AUTONOMY_BY_ACTION = new Map([
   ["write_pending_memory", 1],
   ["read_only_analysis", 1],
   ["source_digest", 1],
+  ["workflow_pack_export", 1],
   ["license_check", 1],
   ["manifest_inspection", 1],
   ["dependency_risk_check", 1],

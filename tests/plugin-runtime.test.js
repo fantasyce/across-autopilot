@@ -50,6 +50,33 @@ test("host-plugin install writes wrapper and manifest", async () => {
   assert.equal(uninstalled.installed, false);
 });
 
+test("install command prepares generic host MCP registrations", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-host-install-"));
+  const acrossHome = await mkdtemp(join(tmpdir(), "across-autopilot-host-across-home-"));
+  const env = { ...process.env, ACROSS_HOME: acrossHome };
+  const claudeConfig = join(home, "claude_desktop_config.json");
+  await writeFile(claudeConfig, JSON.stringify({ deploymentMode: "default" }), "utf8");
+
+  const claudeCode = (await exec("node", [cli, "install", "claude-code", "--stdout"], { env })).stdout;
+  const codex = (await exec("node", [cli, "install", "codex-mcp", "--stdout"], { env })).stdout;
+  const codexJson = JSON.parse((await exec("node", [cli, "install", "codex-mcp", "--json"], { env })).stdout);
+  await exec("node", [cli, "install", "claude-desktop", "--config-file", claudeConfig], { env });
+
+  assert.match(claudeCode, /claude mcp add -s user across-autopilot -- sh -lc /);
+  assert.match(claudeCode, new RegExp(join(acrossHome, "bin", "across-autopilot").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(codex, /codex mcp add across-autopilot -- sh -lc /);
+  assert.match(codex, new RegExp(join(acrossHome, "bin", "across-autopilot").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.equal(codexJson.target, "codex-mcp");
+  assert.match(codexJson.command, /codex mcp add across-autopilot -- sh -lc /);
+  const payload = JSON.parse(await readFile(claudeConfig, "utf8"));
+  assert.equal(payload.deploymentMode, "default");
+  assert.deepEqual(payload.mcpServers["across-autopilot"], {
+    command: "sh",
+    args: ["-lc", `exec '${join(acrossHome, "bin", "across-autopilot")}' mcp`]
+  });
+  assert.equal((await readFile(join(acrossHome, "bin", "across-autopilot"), "utf8")).includes("../plugins/across-autopilot/src/cli.js"), true);
+});
+
 test("cli loop validation exposes built-in LoopSpec", async () => {
   const acrossHome = await mkdtemp(join(tmpdir(), "across-autopilot-state-"));
   const env = { ...process.env, ACROSS_HOME: acrossHome };
@@ -61,9 +88,10 @@ test("cli loop validation exposes built-in LoopSpec", async () => {
     "--json"
   ], { env })).stdout);
   const builtInIds = registry.built_in.map((spec) => spec.id);
-  assert.deepEqual(builtInIds.sort(), ["aaa-autonomous-self-iteration", "aaa-release-readiness-gate", "aaa-research-driven-self-iteration", "aaa-self-iteration-product", "daily-news-brief", "github-plugin-radar", "repo-quality-copilot"]);
+  assert.deepEqual(builtInIds.sort(), ["aaa-autonomous-self-iteration", "aaa-release-readiness-gate", "aaa-research-driven-self-iteration", "aaa-self-iteration-product", "daily-news-brief", "github-plugin-radar", "plugin-compatibility-lab-v2", "repo-quality-copilot"]);
   assert.equal(registry.built_in.find((spec) => spec.id === "github-plugin-radar").title, "GitHub Plugin Radar");
   assert.equal(registry.built_in.find((spec) => spec.id === "repo-quality-copilot").title, "Repository Quality Copilot");
+  assert.equal(registry.built_in.find((spec) => spec.id === "plugin-compatibility-lab-v2").title, "Plugin Compatibility Lab v2");
   assert.equal(registry.built_in.some((spec) => spec.spec), false);
   assert.equal(Array.isArray(registry.registered), true);
 
@@ -90,6 +118,50 @@ test("cli loop validation exposes built-in LoopSpec", async () => {
   ], { env })).stdout);
   assert.equal(dryRun.schema_version, "across-loop-dry-run/1.0");
   assert.ok(dryRun.used_adapters.outputs.includes("video_draft_manifest"));
+});
+
+test("cli exports workflow packs for generic agent hosts", async () => {
+  const registry = JSON.parse((await exec("node", [cli, "workflow-packs", "--json"])).stdout);
+  const pack = registry.packs.find((item) => item.id === "plugin-compatibility-lab-v2");
+  assert.equal(registry.schema_version, "across-workflow-pack-registry/1.0");
+  assert.equal(pack.status, "passed");
+  assert.deepEqual(pack.host_targets, ["codex", "claude_code", "mcp", "a2a", "across"]);
+
+  const exported = JSON.parse((await exec("node", [cli, "workflow-pack", "export", "--pack", "plugin-compatibility-lab-v2", "--json"])).stdout);
+  assert.equal(exported.schema_version, "across-workflow-pack-host-exports/1.0");
+  assert.equal(exported.product_card.schema_version, "across-workflow-pack-product-card/1.0");
+  assert.match(exported.product_card.user_problem, /plugin/i);
+  assert.equal(exported.protocol_readiness.schema_version, "across-workflow-pack-protocol-readiness/1.0");
+  assert.equal(exported.protocol_readiness.summary.honest_protocol_claims, true);
+  assert.equal(exported.trust_receipt.schema_version, "across-agent-team-trust-receipt/1.0");
+  assert.equal(exported.trust_receipt.evidence_contract.graph_schema, "across-evidence-graph/1.0");
+  assert.equal(exported.frontier_interop.schema_version, "across-workflow-pack-frontier-interop/1.0");
+  assert.equal(exported.frontier_interop.remote_mcp.schema_version, "across-remote-mcp-oauth-template/1.0");
+  assert.equal(exported.frontier_interop.a2a.schema_version, "across-a2a-task-delegation/1.0");
+  assert.equal(exported.frontier_interop.observability.otel_schema, "across-otel-genai-export/1.0");
+  assert.equal(exported.frontier_interop.observability.otlp_trace_schema, "otlp-traces-json/1.0");
+  assert.equal(exported.hosts.codex.type, "codex-plugin-task");
+  assert.equal(exported.hosts.codex.trust_receipt_required, true);
+  assert.equal(exported.hosts.claude_code.type, "claude-code-skill-or-mcp-task");
+  assert.equal(exported.hosts.mcp.tools.includes("run_loop"), true);
+  assert.deepEqual(exported.hosts.mcp.task_states, ["working", "input_required", "completed", "failed", "cancelled"]);
+  assert.equal(exported.hosts.mcp.remote_transport_template.transport, "streamable_http");
+  assert.equal(exported.hosts.a2a.agent_card_skill, "plugin-compatibility-lab-v2");
+  assert.ok(exported.hosts.a2a.artifact_contract.includes("run://plugin-compatibility-lab/evidence.json"));
+  assert.equal(exported.hosts.a2a.delegation_contract.schema_version, "across-a2a-task-delegation/1.0");
+  assert.equal(exported.trust_boundary.secrets, "not_allowed");
+
+  const productCard = JSON.parse((await exec("node", [cli, "workflow-pack", "product-card", "--pack", "repo-quality-copilot", "--json"])).stdout);
+  assert.equal(productCard.schema_version, "across-workflow-pack-product-card/1.0");
+  assert.equal(productCard.quickstart.no_model_required, true);
+
+  const trustReceipt = JSON.parse((await exec("node", [cli, "workflow-pack", "trust-receipt", "--pack", "release-captain", "--json"])).stdout);
+  assert.equal(trustReceipt.schema_version, "across-agent-team-trust-receipt/1.0");
+  assert.ok(trustReceipt.acceptance_checklist.some((item) => item.id === "human_promotion_gate" && item.status === "passed"));
+
+  const frontierInterop = JSON.parse((await exec("node", [cli, "workflow-pack", "frontier-interop", "--pack", "plugin-compatibility-lab-v2", "--json"])).stdout);
+  assert.equal(frontierInterop.schema_version, "across-workflow-pack-frontier-interop/1.0");
+  assert.equal(frontierInterop.observability.raw_transcripts_included, false);
 });
 
 test("ecosystem commands resolve from ACROSS_HOME bin without shell PATH", async () => {

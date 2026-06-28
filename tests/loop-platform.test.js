@@ -645,6 +645,9 @@ test("evidence envelopes include integrity hashes and role separation", async ()
 
   assert.match(evidence.integrity.root_hash, /^[a-f0-9]{64}$/);
   assert.match(evidence.integrity.section_hashes.actions, /^[a-f0-9]{64}$/);
+  assert.match(evidence.integrity.section_hashes.evidence_graph, /^[a-f0-9]{64}$/);
+  assert.equal(evidence.evidence_graph.schema_version, "across-evidence-graph/1.0");
+  assert.equal(evidence.evidence_graph.nodes.some((node) => node.id === "action:queue_noop_action"), true);
   assert.equal(evidence.integrity.audit_chain.event_count > 0, true);
   assert.ok(evidence.roles.roles.find((role) => role.role === "builder" && role.model_backed));
 });

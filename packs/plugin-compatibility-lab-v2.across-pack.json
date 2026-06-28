@@ -1,0 +1,54 @@
+{
+  "schema_version": "across-workflow-pack/1.0",
+  "id": "plugin-compatibility-lab-v2",
+  "title": "Plugin Compatibility Lab v2",
+  "description": "Host-neutral plugin compatibility assessment for Codex, Claude Code, MCP, A2A, and AAA.",
+  "loop_spec_id": "plugin-compatibility-lab-v2",
+  "autonomy_level": 2,
+  "host_targets": ["codex", "claude_code", "mcp", "a2a", "across"],
+  "required_capabilities": [
+    "source.directory",
+    "action.workflow_pack_export",
+    "action.manifest_inspection",
+    "action.dependency_risk_check",
+    "action.license_check",
+    "action.compatibility_scoring",
+    "action.quality_gate_evaluation",
+    "output.markdown_report",
+    "output.json_artifact",
+    "memory.pending_summary"
+  ],
+  "runtime_policy": {
+    "risk_profile": "low",
+    "network_policy": "none",
+    "filesystem_policy": "read_only",
+    "budget": {
+      "max_model_calls": 0,
+      "max_candidate_repairs": 0,
+      "max_usd": 0
+    },
+    "promotion": {
+      "human_approval_required": true,
+      "merge_release_signing_blocked": true
+    }
+  },
+  "boundaries": {
+    "mutation": "none",
+    "secrets": "not_allowed",
+    "raw_transcripts": "not_persisted",
+    "promotion": "human_only"
+  },
+  "artifacts": [
+    "run://plugin-compatibility-lab/report.md",
+    "run://plugin-compatibility-lab/evidence.json",
+    "context://pending"
+  ],
+  "scenario": {
+    "name": "Generic agent plugin acceptance",
+    "host_agent_tasks": [
+      "Discover plugin capabilities and trust boundaries.",
+      "Validate that Codex and Claude Code can consume the same host export shape.",
+      "Produce evidence that a read-only workflow completes without model calls or network access."
+    ]
+  }
+}

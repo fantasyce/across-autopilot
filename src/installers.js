@@ -1,4 +1,4 @@
-import { access, chmod, cp, mkdir, realpath, rm, rename, writeFile } from "node:fs/promises";
+import { access, chmod, cp, mkdir, readFile, realpath, rm, rename, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { COMPONENT_ID, ecosystemBinDir, ecosystemHome, pluginRoot } from "./paths.js";
@@ -14,6 +14,44 @@ const HOST_PLUGIN_PACKAGE_ENTRIES = [
   "package.json"
 ];
 const PACKAGE_ROOT = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
+
+export async function installAgentHost(target, options = {}) {
+  if (target === "codex-mcp" || target === "codex") {
+    const runtime = await installHostPlugin(options);
+    return {
+      target: "codex-mcp",
+      command: renderHostMcpAddCommand("codex mcp add", COMPONENT_ID, runtime, options.env || process.env),
+      runtime
+    };
+  }
+  if (target === "claude-code" || target === "claude") {
+    const runtime = await installHostPlugin(options);
+    return {
+      target: "claude-code",
+      command: renderHostMcpAddCommand("claude mcp add -s user", COMPONENT_ID, runtime, options.env || process.env),
+      runtime
+    };
+  }
+  if (target === "claude-desktop") {
+    const runtime = await installHostPlugin(options);
+    const configFile = resolve(options.configFile || defaultClaudeDesktopConfigFile(options.env || process.env));
+    const payload = await readJsonFile(configFile, {});
+    const server = options.command && options.args
+      ? { command: options.command, args: options.args }
+      : renderHostMcpServer(COMPONENT_ID, runtime, options.env || process.env);
+    const next = {
+      ...payload,
+      mcpServers: {
+        ...(payload.mcpServers || {}),
+        "across-autopilot": server
+      }
+    };
+    await mkdir(dirname(configFile), { recursive: true });
+    await writeFile(configFile, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    return { path: configFile, target: "claude-desktop", runtime };
+  }
+  throw new Error(`Unknown install target: ${target}`);
+}
 
 export async function installHostPlugin(options = {}) {
   const sourceRoot = resolve(options.sourceRoot || PACKAGE_ROOT);
@@ -111,6 +149,19 @@ async function realpathOrResolve(path) {
   }
 }
 
+async function readJsonFile(path, fallback) {
+  try {
+    return JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    if (error.code === "ENOENT") return fallback;
+    throw error;
+  }
+}
+
+function defaultClaudeDesktopConfigFile(env) {
+  return join(env.HOME || process.env.HOME || "", "Library", "Application Support", "Claude", "claude_desktop_config.json");
+}
+
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`;
 }
@@ -123,6 +174,32 @@ function renderNodeWrapper(commandPath, targetPath) {
     `exec /usr/bin/env node "$SCRIPT_DIR"/${shellQuote(targetRelativePath)} "$@"`,
     ""
   ].join("\n");
+}
+
+function renderHostMcpAddCommand(prefix, componentId, runtime, env) {
+  const script = renderHostMcpScript(componentId, runtime, env);
+  return `${prefix} ${componentId} -- sh -lc ${shellQuote(script)}`;
+}
+
+function renderHostMcpServer(componentId, runtime, env) {
+  return {
+    command: "sh",
+    args: ["-lc", renderHostMcpScript(componentId, runtime, env)]
+  };
+}
+
+function renderHostMcpScript(componentId, runtime, env) {
+  const commandRef = runtimeCommandReference(componentId, runtime, env);
+  return commandRef.startsWith("$HOME/")
+    ? `exec "${commandRef}" mcp`
+    : `exec ${shellQuote(commandRef)} mcp`;
+}
+
+function runtimeCommandReference(componentId, runtime, env) {
+  const home = resolve(env.HOME || process.env.HOME || "");
+  const defaultCommand = join(home, ".across", "bin", componentId);
+  const commandPath = resolve(runtime.commandPath);
+  return commandPath === defaultCommand ? `$HOME/.across/bin/${componentId}` : commandPath;
 }
 
 function assertHostPluginRuntimePathAllowed(name, value, env) {
