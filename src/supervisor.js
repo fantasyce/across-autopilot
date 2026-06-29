@@ -1,4 +1,7 @@
 import { AdapterRegistry } from "./adapter-registry.js";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { asyncTaskEnvelope, runIdForTaskId, taskIdForRun } from "./async-task.js";
 import { ContextClient } from "./context-client.js";
 import { buildEvidenceEnvelope, gateFromFailure, runtimeBudgetUsage } from "./evidence.js";
 import { FAILURE_CODES, LoopFailure, failureFromError } from "./failures.js";
@@ -94,12 +97,12 @@ export class AutopilotSupervisor {
     let memory = { recalled: [], written: [] };
     let failure = null;
     try {
-      const validation = await this.validateSpec(pathOrId);
-      spec = applyRuntimeModelOverrides(validation.migration.spec, options.modelOverrides);
+      const validation = options.validation || await this.validateSpec(pathOrId);
+      spec = options.spec || applyRuntimeModelOverrides(validation.migration.spec, options.modelOverrides);
       await this.assertNotPaused(spec);
-      run = await this.store.createRun(spec, { trigger: options.trigger || "manual" });
+      run = options.preparedRun || await this.store.createRun(spec, { trigger: options.trigger || "manual" });
       const capabilityPreflight = this.capabilityPreflight(spec);
-      if (validation.migration.changed_paths.length) {
+      if (!options.preparedRun && validation.migration.changed_paths.length) {
         await this.store.audit(run.run_id, spec.id, "spec_migrated", "LoopSpec migrated.", validation.migration);
       }
       await this.store.transition(run.run_id, "validating_spec", "LoopSpec validated.", { ...validation, capability_preflight: capabilityPreflight });
@@ -186,6 +189,84 @@ export class AutopilotSupervisor {
     });
     await this.store.writeEvidence(run.run_id, evidence);
     return { run, evidence };
+  }
+
+  async startAsyncTask(pathOrId, options = {}) {
+    const validation = await this.validateSpec(pathOrId);
+    const spec = applyRuntimeModelOverrides(validation.migration.spec, options.modelOverrides);
+    await this.assertNotPaused(spec);
+    const run = await this.store.createRun(spec, { trigger: options.trigger || "manual" });
+    const task = asyncTaskEnvelope(run, {
+      status: "queued",
+      state: "async_queued",
+      created_at: run.created_at,
+      updated_at: new Date().toISOString()
+    });
+    await this.store.updateRun(run.run_id, {
+      state: "async_queued",
+      async_task: task
+    });
+    await this.store.audit(run.run_id, spec.id, "async_task_created", "Async task created.", task);
+    if (options.spawn !== false) {
+      this.spawnAsyncTaskWorker(run.run_id);
+    }
+    return { ...task, spawned: options.spawn !== false };
+  }
+
+  spawnAsyncTaskWorker(runId) {
+    const cliPath = fileURLToPath(new URL("./cli.js", import.meta.url));
+    const child = spawn(process.execPath, [cliPath, "loop", "run-async-task", "--run-id", runId, "--json"], {
+      detached: true,
+      stdio: "ignore",
+      env: process.env
+    });
+    child.unref();
+    return child.pid;
+  }
+
+  async runAsyncTask(taskIdOrRunId) {
+    const runId = runIdForTaskId(taskIdOrRunId);
+    const preparedRun = await this.store.loadRun(runId);
+    const spec = await this.store.loadSpec(runId);
+    await this.store.updateRun(runId, {
+      state: "async_running",
+      async_task: asyncTaskEnvelope(preparedRun, {
+        status: "running",
+        state: "async_running",
+        updated_at: new Date().toISOString()
+      })
+    });
+    await this.store.audit(runId, spec.id, "async_task_started", "Async task worker started.", { task_id: taskIdForRun(runId) });
+    const validation = {
+      valid: true,
+      spec_id: spec.id,
+      errors: [],
+      warnings: [],
+      migration: {
+        schema_version: "across-loop-spec-migration/1.0",
+        source_schema: spec.schema_version,
+        target_schema: spec.schema_version,
+        changed_paths: [],
+        warnings: [],
+        execution_allowed: true,
+        spec
+      }
+    };
+    const result = await this.run(spec, { preparedRun, spec, validation, trigger: preparedRun.trigger_event || preparedRun.trigger || "async-task" });
+    const finalTask = asyncTaskEnvelope(result.run, {
+      status: result.run.status === "completed" ? "completed" : "failed",
+      state: result.run.state,
+      completed_at: result.run.completed_at,
+      updated_at: new Date().toISOString()
+    });
+    const finalRun = await this.store.updateRun(result.run.run_id, { async_task: finalTask });
+    await this.store.audit(result.run.run_id, spec.id, "async_task_completed", "Async task completed.", finalTask);
+    return { task: finalTask, run: finalRun, evidence: result.evidence };
+  }
+
+  async taskStatus(taskIdOrRunId) {
+    const run = await this.store.loadRun(runIdForTaskId(taskIdOrRunId));
+    return run.async_task || asyncTaskEnvelope(run);
   }
 
   async enqueueTrigger(pathOrId, trigger = {}, options = {}) {

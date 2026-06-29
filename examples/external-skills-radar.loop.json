@@ -1,0 +1,56 @@
+{
+  "schema_version": "across-loop-spec/1.0",
+  "id": "external-skills-radar",
+  "name": "External Skills Radar",
+  "description": "Discover local Codex, Claude Code, and Qwen Code Skills directories as a redacted LoopSpec source.",
+  "owner": { "type": "local_user", "id": "across" },
+  "compatibility": {
+    "min_autopilot_version": ">=0.2.8",
+    "required_orchestrator": ">=0.7.8",
+    "required_context": ">=0.8.7",
+    "required_host": ">=0.9.13"
+  },
+  "required_capabilities": [
+    "source.external_skills_radar",
+    "action.source_digest",
+    "action.report_generation",
+    "output.markdown_report",
+    "output.json_artifact"
+  ],
+  "trigger": { "type": "manual" },
+  "scope": { "project_id": "external-skills-radar", "workspace": "." },
+  "autonomy": { "level": 2, "requires_human_approval_above": 2 },
+  "sources": [
+    {
+      "id": "skills",
+      "type": "external_skills_radar",
+      "adapter": "external_skills_radar"
+    }
+  ],
+  "actions": {
+    "allowed": ["source_digest", "report_generation"],
+    "blocked": ["merge_pr", "release_publish", "sign_artifact", "write_secret"]
+  },
+  "execute": { "engine": "across-orchestrator", "mode": "task" },
+  "outputs": [
+    { "type": "markdown_report", "to": "run://external-skills-radar/report.md", "policy": "overwrite" },
+    { "type": "json_artifact", "to": "run://external-skills-radar/evidence.json", "policy": "overwrite" }
+  ],
+  "gates": [],
+  "memory": { "provider": "across-context", "recall": false, "remember": false, "write_status": "pending" },
+  "failure_policy": { "max_retries": 0, "retry_backoff": "linear", "continue_on_gate_failure": false, "dead_letter": "context_memory" },
+  "sandbox": { "filesystem": "read_only", "network": "none", "env": "minimal" },
+  "evidence_contract": {
+    "schema_version": "across-loop-evidence/1.0",
+    "required_sections": ["sources", "actions", "outputs", "audit"]
+  },
+  "pack_config": {
+    "workflow_pack_id": "plugin-compatibility-lab-v2",
+    "external_skills_radar": true
+  },
+  "used_adapters": {
+    "sources": ["external_skills_radar"],
+    "actions": ["source_digest", "report_generation"],
+    "outputs": ["markdown_report", "json_artifact"]
+  }
+}

@@ -110,6 +110,9 @@ test("mcp server exposes generic agent plugin validation and planning", async ()
     assert.ok(responses[3].result.tools.some((tool) => tool.name === "get_workflow_pack_protocol_readiness"));
     assert.ok(responses[3].result.tools.some((tool) => tool.name === "get_workflow_pack_trust_receipt"));
     assert.ok(responses[3].result.tools.some((tool) => tool.name === "get_workflow_pack_frontier_interop"));
+    assert.ok(responses[3].result.tools.some((tool) => tool.name === "start_async_loop_task"));
+    assert.ok(responses[3].result.tools.some((tool) => tool.name === "discover_external_skills"));
+    assert.ok(responses[3].result.tools.some((tool) => tool.name === "compact_loop_memory"));
     const tools = new Map(responses[3].result.tools.map((tool) => [tool.name, tool]));
     const validateManifest = tools.get("validate_agent_plugin").inputSchema.properties.manifest;
     const planManifest = tools.get("plan_agent_plugin_run").inputSchema.properties.manifest;
@@ -159,6 +162,8 @@ test("mcp server exposes generic agent plugin validation and planning", async ()
     const frontierInterop = JSON.parse(responses[8].result.content[0].text);
     assert.equal(frontierInterop.schema_version, "across-workflow-pack-frontier-interop/1.0");
     assert.equal(frontierInterop.remote_mcp.transport, "streamable_http");
+    assert.equal(frontierInterop.a2a.schema_version, "across-a2a-task-delegation/2.0");
+    assert.equal(frontierInterop.projections.dimensions.ag_ui.schema_version, "across-agui-projection/1.0");
   } finally {
     child.kill();
   }

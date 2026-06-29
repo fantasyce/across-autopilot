@@ -13,6 +13,7 @@ export const BUILT_IN_SPEC_PATHS = Object.freeze({
   "aaa-research-driven-self-iteration": join(PACKAGE_ROOT, "examples", "aaa-research-driven-self-iteration.loop.json"),
   "aaa-release-readiness-gate": join(PACKAGE_ROOT, "examples", "aaa-release-readiness-gate.loop.json"),
   "plugin-compatibility-lab-v2": join(PACKAGE_ROOT, "examples", "plugin-compatibility-lab-v2.loop.json"),
+  "external-skills-radar": join(PACKAGE_ROOT, "examples", "external-skills-radar.loop.json"),
   "repo-quality-copilot": join(PACKAGE_ROOT, "examples", "repo-quality-copilot.loop.json"),
   "github-plugin-radar": join(PACKAGE_ROOT, "examples", "github-plugin-radar.loop.json"),
   "daily-news-brief": join(PACKAGE_ROOT, "examples", "daily-news-brief.loop.json")

@@ -3,12 +3,14 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { buildAgentPluginRunPlan, normalizeAgentPluginManifest } from "./agent-plugin-contract.js";
 import { buildCandidatePlan, buildPromotionReport, createCandidate, evaluateCandidate } from "./candidates.js";
+import { compactLoopMemoryByEvidenceGraph } from "./loop-memory-compaction.js";
 import { AdapterRegistry } from "./adapter-registry.js";
 import { buildAutopilotEcosystemRoadmap } from "./ecosystem-roadmap.js";
 import { installAgentHost, installHostPlugin, uninstallHostPlugin } from "./installers.js";
 import { loadBuiltInSpecs } from "./loop-spec.js";
 import { renderHealth, renderPluginManifest, renderPluginStatus } from "./plugin-manifest.js";
 import { buildReview, fetchSourceStatuses, loadSources, writeReview } from "./review.js";
+import { discoverExternalSkills } from "./skill-radar.js";
 import { latestCandidate, loadState, recordCandidate, saveState } from "./state.js";
 import { AutopilotSupervisor } from "./supervisor.js";
 import {
@@ -173,6 +175,18 @@ async function main(argv) {
     );
   }
 
+  if (command === "skills-radar") {
+    const parsed = parseArgs(rest);
+    const roots = parsed.root ? (Array.isArray(parsed.root) ? parsed.root : [parsed.root]) : undefined;
+    return printPayload(await discoverExternalSkills({ roots }), parsed);
+  }
+
+  if (command === "loop-memory-compact") {
+    const parsed = parseArgs(rest);
+    const payload = parsed.evidence ? JSON.parse(await readFile(resolve(parsed.evidence), "utf8")) : {};
+    return printPayload(compactLoopMemoryByEvidenceGraph(payload), parsed);
+  }
+
   if (command === "agent-plugin") {
     return handleAgentPluginCommand(rest);
   }
@@ -227,7 +241,18 @@ async function handleLoopCommand(args) {
   const spec = parsed.spec || parsed.positionals[0];
   if (subcommand === "validate") return printPayload(await supervisor.validateSpec(required(spec, "--spec")), parsed);
   if (subcommand === "dry-run") return printPayload(await supervisor.dryRun(required(spec, "--spec"), { modelOverrides: modelOverridesFromParsed(parsed) }), parsed);
-  if (subcommand === "run") return printPayload(await supervisor.run(required(spec, "--spec"), { trigger: parsed.trigger || "manual", modelOverrides: modelOverridesFromParsed(parsed) }), parsed);
+  if (subcommand === "run") {
+    if (parsed.async || parsed["return-task-id"]) {
+      return printPayload(await supervisor.startAsyncTask(required(spec, "--spec"), {
+        trigger: parsed.trigger || "manual",
+        modelOverrides: modelOverridesFromParsed(parsed),
+        spawn: parsed.spawn === undefined ? true : !["0", "false", "no"].includes(String(parsed.spawn).toLowerCase())
+      }), parsed);
+    }
+    return printPayload(await supervisor.run(required(spec, "--spec"), { trigger: parsed.trigger || "manual", modelOverrides: modelOverridesFromParsed(parsed) }), parsed);
+  }
+  if (subcommand === "run-async-task") return printPayload(await supervisor.runAsyncTask(required(parsed["run-id"] || parsed["task-id"], "--run-id")), parsed);
+  if (subcommand === "task-status") return printPayload(await supervisor.taskStatus(required(parsed["task-id"] || parsed["run-id"], "--task-id")), parsed);
   if (subcommand === "enqueue-trigger") {
     return printPayload(await supervisor.enqueueTrigger(required(spec, "--spec"), triggerOptions(parsed)), parsed);
   }
@@ -383,7 +408,7 @@ function parseArgs(args) {
       continue;
     }
     const key = arg.slice(2);
-    if (["json", "fetch", "foreground", "follow"].includes(key)) {
+    if (["json", "fetch", "foreground", "follow", "async", "return-task-id"].includes(key)) {
       parsed[key] = true;
       continue;
     }
@@ -404,7 +429,8 @@ function printHelp() {
 Commands:
   loop validate --spec path --json
   loop dry-run --spec path --json
-  loop run --spec path --json
+  loop run --spec path [--async --return-task-id] --json
+  loop task-status --task-id id --json
   loop enqueue-trigger --spec path --type cron --payload-json '{}' --json
   loop trigger-queue --json
   loop run-trigger [--trigger-id id] --json
@@ -439,6 +465,8 @@ Commands:
   plugin-status --json
   ecosystem-roadmap --json
   ecosystem-roadmap [--agent-plugin-manifest path] --json
+  skills-radar [--root path] --json
+  loop-memory-compact --evidence path --json
   agent-plugin validate --manifest path --json
   agent-plugin plan --manifest path --goal text --json
   health --json
