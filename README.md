@@ -68,9 +68,13 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.7`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.7` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.8`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.8` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.8` adds the async task projection for LoopSpec runs, external skills
+radar input, loop-memory compaction, and Plugin Compatibility Lab v2 projection
+scoring while keeping the run-store as the source of truth.
 
 `v0.2.7` removes stale AAA planning-document dependencies from Autopilot's
 default candidate context, examples, and RFC text. AAA candidate work now uses
@@ -275,5 +279,5 @@ through `~/.across/plugins/across-autopilot` and
 | 4 | Merge/release low-risk patch work with release evidence |
 | 5 | Protocol/runtime/release automation after explicit policy approval |
 
-`v0.2.7` defaults to level 1. Higher autonomy levels remain policy-gated and
+`v0.2.8` defaults to level 1. Higher autonomy levels remain policy-gated and
 must be enabled by a host or operator that owns the merge/release decision.

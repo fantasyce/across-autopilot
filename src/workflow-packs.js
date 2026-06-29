@@ -360,7 +360,10 @@ export function renderWorkflowPackTrustReceipt(pack, { registry = null, productC
       memory_policy: "pending_review",
       otel_schema: "across-otel-genai-export/1.0",
       otlp_trace_schema: "otlp-traces-json/1.0",
-      a2a_delegation_schema: "across-a2a-task-delegation/1.0"
+      a2a_delegation_schema: "across-a2a-task-delegation/2.0",
+      a2a_compatible_schemas: ["across-a2a-task-delegation/1.0"],
+      projection_contract: "across-external-projection/1.0",
+      required_projections: ["mcp_tasks", "a2a", "ag_ui", "remote_mcp_oauth", "otel"]
     },
     protocol_summary: readiness.summary,
     user_visible_outputs: card.outputs,
@@ -377,11 +380,13 @@ export function renderWorkflowPackProtocolReadiness(pack, { registry = null } = 
   const checks = [
     protocolCheck("managed_host_wrapper", "passed", "Codex, Claude Code, and Claude Desktop launch through managed ~/.across/bin wrappers."),
     protocolCheck("mcp_stdio", hostTargets.includes("mcp") ? "passed" : "planned", "Local MCP stdio loading works for current coding-agent hosts."),
-    protocolCheck("mcp_tasks_contract", hostTargets.includes("mcp") ? "partial" : "planned", "Long-running work is represented in Across run lifecycle; formal MCP Tasks extension mapping is not a remote protocol server yet."),
+    protocolCheck("mcp_tasks_contract", hostTargets.includes("mcp") ? "partial" : "planned", "Long-running work is represented as across-async-task/1.0 with the run-store as source of truth; MCP Tasks remains projection-only."),
     protocolCheck("mcp_apps_surface", "planned", "AAA Workbench is the current review UI; MCP Apps-compatible server-rendered UI remains a future deployment surface."),
-    protocolCheck("remote_mcp_http_oauth", "partial", "Secret-free Streamable HTTP/OAuth deployment template is exported; production remote hosting remains host-owned."),
-    protocolCheck("a2a_agent_card", hostTargets.includes("a2a") ? "partial" : "planned", "A2A-style task cards are exported for discovery."),
-    protocolCheck("a2a_task_delegation", hostTargets.includes("a2a") ? "partial" : "planned", "A2A task/message/artifact delegation envelope is exported for host gateways."),
+    protocolCheck("remote_mcp_http_oauth", "passed", "Streamable HTTP/OAuth template requires RFC 8707 resource-bound tokens; production hosting remains host-owned."),
+    protocolCheck("a2a_agent_card", hostTargets.includes("a2a") ? "passed" : "planned", "A2A-style task cards are exported for discovery."),
+    protocolCheck("a2a_task_delegation", hostTargets.includes("a2a") ? "passed" : "planned", "LF-compatible A2A v2 task/message/artifact delegation envelope is exported for host gateways."),
+    protocolCheck("ag_ui_projection", "passed", "Task-card state can be projected to AG-UI events by Orchestrator and surfaced by AAA."),
+    protocolCheck("projection_observability", "passed", "Plugin Compatibility Lab v2 scores MCP Tasks, A2A, AG-UI, Remote MCP/OAuth, and OTel projections as observable dimensions."),
     protocolCheck("otel_genai_export", "passed", "Evidence graphs can be converted into OTel/GenAI-style spans and gate-based eval cases."),
     protocolCheck("evidence_receipt", "passed", "Every pack exports a trust receipt template and expects across-evidence-graph/1.0 run evidence."),
     protocolCheck("context_memory_handoff", "passed", "Context stores pending summaries and compact evidence memory without raw transcripts.")
@@ -418,9 +423,23 @@ export function renderWorkflowPackFrontierInterop(pack) {
       production_hosting: "host_owned"
     },
     a2a: {
-      schema_version: "across-a2a-task-delegation/1.0",
+      schema_version: "across-a2a-task-delegation/2.0",
+      compatible_schema_versions: ["across-a2a-task-delegation/1.0"],
+      profile: "linux-foundation-a2a",
       task_states: ["submitted", "working", "input-required", "completed", "failed", "canceled"],
       command: `across-orchestrator a2a-delegation --payload-json '{"pack_id":"${pack.id}"}' --json`
+    },
+    mcp_tasks: {
+      schema_version: "across-async-task/1.0",
+      status: "projection_only",
+      command: `across-autopilot loop run --spec ${pack.loop_spec_id} --async --return-task-id --json`,
+      source_of_truth: "across-autopilot-run-store"
+    },
+    ag_ui: {
+      schema_version: "across-agui-projection/1.0",
+      status: "passed",
+      event_source: "orchestrator_loop_event_stream",
+      component: "AcrossTaskCard"
     },
     observability: {
       otel_schema: "across-otel-genai-export/1.0",
@@ -428,6 +447,17 @@ export function renderWorkflowPackFrontierInterop(pack) {
       eval_dataset_schema: "across-eval-dataset/1.0",
       command: "across-orchestrator otel-export --payload-json '<evidence>' --otlp-file /tmp/across-otel-traces.json --json",
       raw_transcripts_included: false
+    },
+    projections: {
+      schema_version: "across-external-projection/1.0",
+      dimensions: {
+        mcp_tasks: { status: "projection_only", schema_version: "across-async-task/1.0" },
+        a2a: { status: "passed", schema_version: "across-a2a-task-delegation/2.0" },
+        ag_ui: { status: "passed", schema_version: "across-agui-projection/1.0" },
+        remote_mcp_oauth: { status: "passed", schema_version: "across-remote-mcp-oauth-template/1.0" },
+        otel: { status: "passed", schema_version: "across-otel-genai-export/1.0" }
+      },
+      score_weight: "plugin_compatibility_lab_v2"
     }
   };
 }

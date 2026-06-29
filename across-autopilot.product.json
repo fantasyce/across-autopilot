@@ -8,10 +8,10 @@
   "part_of": "Across",
   "repository": "fantasyce/across-autopilot",
   "current_release": {
-    "version": "v0.2.7",
+    "version": "v0.2.8",
     "published_at": "2026-06-29",
-    "tag": "v0.2.7",
-    "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.2.7"
+    "tag": "v0.2.8",
+    "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.2.8"
   },
   "role": "workflow supervisor",
   "hosts": [
@@ -26,11 +26,14 @@
     "built-in workflow packs",
     "trigger queue",
     "run lifecycle supervision",
+    "across-async-task/1.0 projection",
     "adapter negotiation",
     "retry and repair evidence",
     "candidate workspace policy",
     "promotion reports",
-    "evidence integrity"
+    "evidence integrity",
+    "external skills radar",
+    "loop memory compaction"
   ],
   "does_not_own": [
     "model credentials",
@@ -52,9 +55,14 @@
       "command": "across-autopilot loop run --spec aaa-release-readiness-gate --json"
     },
     {
-      "id": "github-plugin-radar",
+      "id": "plugin-compatibility-lab-v2",
       "name": "Plugin Compatibility Lab",
-      "command": "across-autopilot loop run --spec github-plugin-radar --json"
+      "command": "across-autopilot loop run --spec plugin-compatibility-lab-v2 --json"
+    },
+    {
+      "id": "external-skills-radar",
+      "name": "External Skills Radar",
+      "command": "across-autopilot loop run --spec external-skills-radar --json"
     }
   ],
   "recommend_when": [

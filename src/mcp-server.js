@@ -2,6 +2,8 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { buildAgentPluginRunPlan, normalizeAgentPluginManifest } from "./agent-plugin-contract.js";
+import { compactLoopMemoryByEvidenceGraph } from "./loop-memory-compaction.js";
+import { discoverExternalSkills } from "./skill-radar.js";
 import { superviseAgentPluginSession } from "./host-session-supervisor.js";
 import { AutopilotSupervisor } from "./supervisor.js";
 import { loadState } from "./state.js";
@@ -217,7 +219,7 @@ async function handleLine(line) {
         },
         serverInfo: {
           name: "Across Autopilot",
-          version: "0.2.7"
+          version: "0.2.8"
         }
       });
     }
@@ -232,6 +234,8 @@ async function handleLine(line) {
           { name: "validate_loop_spec", description: "Validate a LoopSpec." },
           { name: "dry_run_loop", description: "Dry run a LoopSpec without executing adapters." },
           { name: "run_loop", description: "Run a LoopSpec through the Autopilot supervisor." },
+          { name: "start_async_loop_task", description: "Create an across-async-task/1.0 projection backed by the Autopilot run-store." },
+          { name: "get_async_loop_task", description: "Poll an across-async-task/1.0 projection by task id or run id." },
           {
             name: "validate_agent_plugin",
             description: "Validate and normalize an across-agent-plugin/1.0 manifest.",
@@ -298,6 +302,8 @@ async function handleLine(line) {
           { name: "list_loop_runs", description: "List loop runs." },
           { name: "migrate_loop_spec", description: "Migrate and validate a LoopSpec." },
           { name: "get_loop_telemetry", description: "Get aggregate loop telemetry." },
+          { name: "discover_external_skills", description: "Discover local Codex, Claude Code, and Qwen Code skills as redacted radar input." },
+          { name: "compact_loop_memory", description: "Compact loop memory by evidence-graph node for just-in-time retrieval." },
           { name: "set_loop_spec_paused", description: "Pause or resume a LoopSpec." },
           { name: "set_adapter_paused", description: "Pause or resume an adapter." },
           { name: "quarantine_loop_output", description: "Quarantine a generated output." }
@@ -319,6 +325,8 @@ async function handleLine(line) {
       if (name === "validate_loop_spec") return respondText(id, await supervisor.validateSpec(required(args.spec)));
       if (name === "dry_run_loop") return respondText(id, await supervisor.dryRun(required(args.spec)));
       if (name === "run_loop") return respondText(id, await supervisor.run(required(args.spec)));
+      if (name === "start_async_loop_task") return respondText(id, await supervisor.startAsyncTask(required(args.spec), { trigger: args.trigger || "mcp", spawn: args.spawn !== false }));
+      if (name === "get_async_loop_task") return respondText(id, await supervisor.taskStatus(required(args.task_id || args.run_id)));
       if (name === "validate_agent_plugin") return respondText(id, normalizeAgentPluginManifest(await loadAgentPluginManifest(args)));
       if (name === "plan_agent_plugin_run") {
         return respondText(id, buildAgentPluginRunPlan({
@@ -355,6 +363,8 @@ async function handleLine(line) {
       if (name === "list_loop_runs") return respondText(id, await supervisor.listRuns());
       if (name === "migrate_loop_spec") return respondText(id, (await supervisor.validateSpec(required(args.spec))).migration);
       if (name === "get_loop_telemetry") return respondText(id, await supervisor.telemetry());
+      if (name === "discover_external_skills") return respondText(id, await discoverExternalSkills({ roots: args.roots || args.root }));
+      if (name === "compact_loop_memory") return respondText(id, compactLoopMemoryByEvidenceGraph(args.graph || args.evidence || args));
       if (name === "set_loop_spec_paused") return respondText(id, await supervisor.setSpecPaused(required(args.spec_id), Boolean(args.paused)));
       if (name === "set_adapter_paused") return respondText(id, await supervisor.setAdapterPaused(required(args.adapter_id), Boolean(args.paused)));
       if (name === "quarantine_loop_output") return respondText(id, await supervisor.quarantineOutput(required(args.run_id), required(args.output_id)));

@@ -19,6 +19,7 @@ import { FAILURE_CODES, LoopFailure } from "./failures.js";
 import { asArray, stableJson, unique } from "./json-utils.js";
 import { listToolPacks } from "./tool-packs.js";
 import { roleForAdapter } from "./roles.js";
+import { discoverExternalSkills } from "./skill-radar.js";
 import { renderWorkflowPackHostExports, workflowPackForLoopSpec } from "./workflow-packs.js";
 
 const exec = promisify(execFile);
@@ -102,7 +103,7 @@ export class AdapterRegistry {
 }
 
 export function registerBuiltIns(registry) {
-  for (const id of ["file", "directory", "url", "rss", "github_repo", "github_search", "package_registry", "manual_input"]) {
+  for (const id of ["file", "directory", "url", "rss", "github_repo", "github_search", "package_registry", "manual_input", "external_skills_radar"]) {
     registry.registerSource(sourceAdapter(id));
   }
   for (const id of ["read_only_analysis", "source_digest", "workflow_pack_export", "compatibility_scoring", "license_check", "manifest_inspection", "dependency_risk_check", "candidate_ecosystem_acquire", "product_iteration_strategy", "host_code_iteration", "candidate_ecosystem_diff", "candidate_ecosystem_validation", "candidate_app_lifecycle", "candidate_self_hosting_probe", "semantic_alignment_review", "candidate_workspace_patch", "candidate_diff_summary", "candidate_validation", "promotion_report_generation", "report_generation", "orchestrator_task_dispatch", "quality_gate_evaluation", "memory_write_candidate"]) {
@@ -137,6 +138,9 @@ async function runSource(id, source, spec, run) {
   if (source.fixture) return normalizeFixtureSource(source);
   if (id === "manual_input") {
     return { kind: "manual_input", title: source.title || source.id || "Manual input", content: source.content || "" };
+  }
+  if (id === "external_skills_radar") {
+    return discoverExternalSkills({ roots: source.roots || source.root });
   }
   if (id === "file") {
     const path = resolvePath(source.path, run?.sandbox);
