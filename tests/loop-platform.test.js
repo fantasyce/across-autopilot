@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { AutopilotSupervisor } from "../src/supervisor.js";
 import { AdapterRegistry, registerBuiltIns } from "../src/adapter-registry.js";
-import { acquireCandidateEcosystem, buildCandidatePromotionEvidence, candidateConfig, candidateEcosystemDiff, candidateRuntimePreflight, runCandidateAppLifecycle, runHostCodeIteration, runProductIterationStrategy, semanticAlignmentReview, validateCandidateEcosystem } from "../src/candidate-ecosystem.js";
+import { acquireCandidateEcosystem, buildCandidatePromotionEvidence, candidateConfig, candidateEcosystemDiff, candidateRuntimePreflight, ecosystemGateStatus, runCandidateAppLifecycle, runHostCodeIteration, runProductIterationStrategy, semanticAlignmentReview, validateCandidateEcosystem } from "../src/candidate-ecosystem.js";
 import { prepareAutonomousLoopState } from "../src/loop-state.js";
 import { diagnosePlatformSelfRepair, renderTriggerPayloadSource } from "../src/platform-self-repair.js";
 import { RunStore } from "../src/run-store.js";
@@ -474,6 +474,49 @@ test("candidate validation smokes AAA backend API imports for runtime Python cha
   assert.match(smoke.stderr, /build_autopilot_workbench_snapshot|ImportError/);
 });
 
+test("candidate validation records Python runtime incompatibility diagnostics", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-python-diagnostic-"));
+  const repo = join(home, "candidate", "across-agents-assistant");
+  await createGitSource(repo, {
+    "README.md": "# AAA\n",
+    "backend/src/across_agents_assistant/__init__.py": ""
+  });
+
+  const spec = {
+    id: "python-runtime-diagnostic",
+    pack_config: {
+      target_repo: "across-agents-assistant",
+      candidate_validation: {
+        commands: [
+          {
+            repo: "across-agents-assistant",
+            command: "python3",
+            args: [
+              "-c",
+              "raise TypeError(\"unsupported operand type(s) for |: '_GenericAlias' and 'NoneType'\")"
+            ]
+          }
+        ]
+      }
+    }
+  };
+  const validation = await validateCandidateEcosystem({
+    spec,
+    run: { run_id: "run-python-runtime-diagnostic" },
+    actions: [{
+      adapter: "candidate_ecosystem_acquire",
+      result: { repos: [{ id: "across-agents-assistant", target: repo }] }
+    }],
+    env: { ...process.env, ACROSS_HOME: home }
+  });
+  const failed = validation.commands.find((command) => command.command === "python3");
+
+  assert.equal(validation.status, "attention");
+  assert.ok(failed);
+  assert.equal(failed.diagnostic.failure_kind, "python_version_incompatible");
+  assert.match(failed.diagnostic.failure_summary, /newer than the validation Python runtime/);
+});
+
 test("candidate validation rejects undeclared AAA backend runtime imports", async () => {
   const home = await mkdtemp(join(tmpdir(), "across-autopilot-aaa-runtime-deps-"));
   const sourceRoot = join(home, "sources");
@@ -534,6 +577,75 @@ test("candidate validation rejects undeclared AAA backend runtime imports", asyn
   assert.equal(smoke.status, "failed");
   assert.match(smoke.stderr, /undeclared AAA backend runtime import\(s\).*flask/);
   assert.doesNotMatch(smoke.stderr, /fastapi in/);
+});
+
+test("candidate validation rejects missing exports from changed AAA runtime imports", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-aaa-runtime-imports-"));
+  const sourceRoot = join(home, "sources");
+  const repos = [];
+  for (const id of ["across-agents-assistant", "across-orchestrator", "across-context", "across-autopilot"]) {
+    const source = join(sourceRoot, id);
+    await createGitSource(source, id === "across-agents-assistant" ? {
+      "README.md": "# AAA\n",
+      "backend/requirements.txt": "fastapi>=0.138.2\nuvicorn>=0.49.0\n",
+      "backend/requirements_no_pyobjc.txt": "fastapi>=0.138.2\nuvicorn>=0.49.0\n",
+      "backend/src/across_agents_assistant/__init__.py": "",
+      "backend/src/across_agents_assistant/api_server.py": "from fastapi import FastAPI\nAPP_READY = True\n",
+      "backend/src/across_agents_assistant/autopilot_workbench.py": "def snapshot():\n  return {'status': 'source'}\n"
+    } : {
+      "README.md": `# ${id}\n`
+    });
+    repos.push({ id, source });
+  }
+
+  const spec = {
+    id: "aaa-runtime-imports",
+    pack_config: {
+      target_repo: "across-agents-assistant",
+      candidate_ecosystem: { repos },
+      candidate_validation: { commands: [] }
+    }
+  };
+  const run = { run_id: "run-aaa-runtime-imports" };
+  const env = { ...process.env, ACROSS_HOME: home };
+  const acquired = await acquireCandidateEcosystem({ spec, run, env });
+  const aaaTarget = acquired.repos.find((repo) => repo.id === "across-agents-assistant").target;
+  await writeFile(
+    join(aaaTarget, "backend", "src", "across_agents_assistant", "autopilot_mcp_tool_registry.py"),
+    "def evaluate_candidate_signal():\n  return {'status': 'generic'}\n",
+    "utf8"
+  );
+  await writeFile(
+    join(aaaTarget, "backend", "src", "across_agents_assistant", "autopilot_workbench.py"),
+    "from .autopilot_mcp_tool_registry import MCPToolRegistry\n\n\ndef snapshot():\n  return {'registry': MCPToolRegistry}\n",
+    "utf8"
+  );
+
+  const diff = await candidateEcosystemDiff({
+    spec,
+    run,
+    actions: [{ adapter: "candidate_ecosystem_acquire", result: acquired }],
+    env
+  });
+  const validated = await validateCandidateEcosystem({
+    spec,
+    run,
+    actions: [
+      { adapter: "candidate_ecosystem_acquire", result: acquired },
+      { adapter: "candidate_ecosystem_diff", result: diff }
+    ],
+    env
+  });
+  const smoke = validated.commands.find((command) => (
+    command.implicit && command.summary === "AAA backend API import contract smoke"
+  ));
+
+  assert.equal(validated.status, "attention");
+  assert.ok(smoke);
+  assert.equal(smoke.status, "failed");
+  assert.match(smoke.stderr, /missing internal API import\(s\)/);
+  assert.match(smoke.stderr, /autopilot_workbench\.py/);
+  assert.match(smoke.stderr, /autopilot_mcp_tool_registry\.MCPToolRegistry/);
 });
 
 test("candidate ecosystem product snapshot preserves executable root files", async () => {
@@ -643,6 +755,91 @@ process.stdout.write(JSON.stringify({
   assert.equal(result.candidate_model_lease.schema_version, "across-candidate-model-lease/1.0");
   assert.equal(result.candidate_model_lease.secrets_included, false);
   assert.deepEqual(result.changed_files, ["across-agents-assistant/backend/src/across_agents_assistant/lease_candidate.py"]);
+});
+
+test("host code iteration repair fails clearly when patches make no changes", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-noop-repair-"));
+  const sourcesRoot = join(home, "sources");
+  const repos = [];
+  for (const id of ["across-agents-assistant", "across-orchestrator", "across-context", "across-autopilot"]) {
+    const source = join(sourcesRoot, id);
+    const files = id === "across-agents-assistant"
+      ? { "backend/src/across_agents_assistant/capability.py": "VALUE = 'unchanged'\n" }
+      : { "README.md": `# ${id}\n` };
+    await createGitSource(source, files);
+    repos.push({ id, source });
+  }
+  const hostCommand = join(home, "host-code-noop.js");
+  await writeFile(hostCommand, `#!/usr/bin/env node
+const args = process.argv.slice(2);
+const request = JSON.parse(args[args.indexOf("--request-json") + 1]);
+if (!request.validation_feedback.length) throw new Error("expected validation feedback");
+process.stdout.write(JSON.stringify({
+  schema_version: "across-host-code-iteration/1.0",
+  status: "passed",
+  model_backed: true,
+  provider: "fake-host",
+  model: "noop-builder",
+  summary: "No-op repair",
+  patches: [{ path: "backend/src/across_agents_assistant/capability.py", mode: "overwrite", content: "VALUE = 'unchanged'\\n" }]
+}));
+`, "utf8");
+  const env = {
+    ...process.env,
+    ACROSS_HOME: home,
+    ACROSS_AAA_HOST_CODE_COMMAND: JSON.stringify(["node", hostCommand])
+  };
+  const run = { run_id: "run-noop-repair" };
+  const spec = {
+    id: "noop-repair-spec",
+    description: "Verify no-op repairs do not consume validation repair loops silently.",
+    pack_config: {
+      target_repo: "across-agents-assistant",
+      candidate_ecosystem: { repos },
+      allowed_patch_paths: ["backend/src/across_agents_assistant/capability.py"],
+      validation_commands: []
+    },
+    model_policy: { required: true }
+  };
+  const acquired = await acquireCandidateEcosystem({ spec, run, env });
+
+  await assert.rejects(
+    runHostCodeIteration({
+      spec,
+      run,
+      env,
+      actions: [
+        { adapter: "candidate_ecosystem_acquire", result: acquired },
+        {
+          adapter: "product_iteration_strategy",
+          result: {
+            selected_iteration: {
+              goal: "Repair unchanged capability helper.",
+              target_repo: "across-agents-assistant",
+              allowed_patch_paths: ["backend/src/across_agents_assistant/capability.py"]
+            }
+          }
+        },
+        {
+          adapter: "candidate_ecosystem_validation",
+          status: "attention",
+          result: {
+            commands: [{
+              command: "python3",
+              args: ["-c", "raise AssertionError('still broken')"],
+              status: "failed",
+              diagnostic: { failure_kind: "candidate_test_assertion" }
+            }]
+          }
+        }
+      ]
+    }),
+    (error) => {
+      assert.match(error.message, /produced no file changes/);
+      assert.match(error.message, /candidate_test_assertion/);
+      return true;
+    }
+  );
 });
 
 test("JSON command failures preserve bounded stdout and stderr diagnostics", async () => {
@@ -2543,6 +2740,35 @@ console.log(JSON.stringify({
   }
 });
 
+test("research strategy gate accepts admitted fallback target after deferred decision", () => {
+  const [passed, reason] = ecosystemGateStatus("research_iteration_strategy_ready", {
+    actions: [
+      {
+        adapter: "product_iteration_strategy",
+        status: "attention",
+        result: {
+          status: "attention",
+          decision: "defer",
+          admission: { status: "passed" },
+          selected_iteration: {
+            target_id: "autopilot-self-repair-replay-fixture",
+            target_repo: "across-autopilot",
+            goal: "Add deterministic platform self-repair replay coverage."
+          }
+        }
+      },
+      {
+        adapter: "host_code_iteration",
+        status: "passed",
+        result: { changed_files: ["across-autopilot/tests/platform-self-repair.test.js"] }
+      }
+    ]
+  });
+
+  assert.equal(passed, true);
+  assert.match(reason, /admitted product iteration/);
+});
+
 test("research-driven self-iteration validates generated tests directly", async () => {
   const spec = JSON.parse(await readFile(join("examples", "aaa-research-driven-self-iteration.loop.json"), "utf8"));
   const targets = spec.pack_config.research_strategy.candidate_targets;
@@ -2623,6 +2849,7 @@ const count = fs.existsSync(counterPath) ? Number(fs.readFileSync(counterPath, "
 fs.writeFileSync(counterPath, String(count + 1));
 if (count === 0 && request.validation_feedback.length) throw new Error("first attempt should not include validation feedback");
 if (count > 0 && !request.validation_feedback.length) throw new Error("repair attempt must include validation feedback");
+if (count > 0 && !request.validation_feedback[0].diagnostic?.failure_kind) throw new Error("repair attempt must include validation diagnostics");
 const helper = count === 0
   ? "def score_research_iteration_candidate(research_brief):\\n    sources = list(research_brief.get('sources') or [])\\n    validation = list(research_brief.get('validation_commands') or [])\\n    relevance = {'high': 1.0, 'medium': 0.6, 'low': 0.3}.get(sources[0].get('relevance', 'low'), 0.0) if sources else 0.0\\n    if not sources or not validation or relevance < 0.3:\\n        return {'recommendation': 'reject', 'evidence_count': len(sources)}\\n    return {'recommendation': 'review', 'evidence_count': len(sources) + len(validation)}\\n"
   : count === 1
@@ -2699,6 +2926,174 @@ console.log(JSON.stringify({
   } finally {
     restoreEnv(previousEnv);
   }
+});
+
+test("host code iteration applies marker upsert patches idempotently", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-upsert-"));
+  const repo = join(home, "candidate", "across-agents-assistant");
+  const rel = "backend/src/across_agents_assistant/autopilot_workbench.py";
+  await mkdir(dirname(join(repo, rel)), { recursive: true });
+  await writeFile(join(repo, rel), "def existing_workbench():\n    return 'ok'\n", "utf8");
+
+  const command = join(home, "host-code-upsert.js");
+  await writeFile(command, `#!/usr/bin/env node
+console.log(JSON.stringify({
+  schema_version: "across-host-code-iteration/1.0",
+  status: "passed",
+  model_backed: true,
+  provider: "fake-host",
+  model: "fake-loop-engineer",
+  decision_hash: "fake-upsert",
+  summary: "Add workbench telemetry bridge",
+  patches: [{
+    path: ${JSON.stringify(rel)},
+    mode: "upsert_between_markers",
+    marker_start: "# ACROSS ITERATION TELEMETRY START",
+    marker_end: "# ACROSS ITERATION TELEMETRY END",
+    content: "def build_iteration_telemetry_snapshot():\\n    return {'status': 'ready'}\\n"
+  }]
+}));
+`, "utf8");
+
+  const spec = {
+    id: "upsert-test",
+    pack_config: {
+      target_repo: "across-agents-assistant",
+      code_iteration: {
+        command: JSON.stringify(["node", command]),
+        allowed_patch_paths: [rel]
+      }
+    }
+  };
+  const actions = [
+    {
+      adapter: "candidate_ecosystem_acquire",
+      result: {
+        repos: [{ id: "across-agents-assistant", target: repo }],
+        model_lease: {}
+      }
+    },
+    {
+      adapter: "product_iteration_strategy",
+      result: {
+        selected_iteration: {
+          target_id: "workbench-telemetry",
+          target_repo: "across-agents-assistant",
+          goal: "Add workbench telemetry bridge.",
+          allowed_patch_paths: [rel],
+          validation_commands: []
+        }
+      }
+    }
+  ];
+
+  await runHostCodeIteration({ spec, run: { run_id: "run-upsert" }, actions, env: process.env });
+  await runHostCodeIteration({ spec, run: { run_id: "run-upsert" }, actions, env: process.env });
+
+  const content = await readFile(join(repo, rel), "utf8");
+  assert.match(content, /def existing_workbench/);
+  assert.match(content, /def build_iteration_telemetry_snapshot/);
+  assert.equal((content.match(/ACROSS ITERATION TELEMETRY START/g) || []).length, 1);
+  assert.equal((content.match(/ACROSS ITERATION TELEMETRY END/g) || []).length, 1);
+});
+
+test("host code iteration restores destructive entrypoint rewrites before repair patches", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-entrypoint-restore-"));
+  const source = join(home, "source", "across-agents-assistant");
+  const repo = join(home, "candidate", "across-agents-assistant");
+  const rel = "backend/src/across_agents_assistant/api_server.py";
+  const sourceContent = "from fastapi import FastAPI\n\napp = FastAPI()\n\nORIGINAL_API = True\n";
+  await mkdir(dirname(join(source, rel)), { recursive: true });
+  await mkdir(dirname(join(repo, rel)), { recursive: true });
+  await writeFile(join(source, rel), sourceContent, "utf8");
+  await writeFile(join(repo, rel), "\"\"\"truncated api replacement\"\"\"\nBROKEN = True\n", "utf8");
+
+  const command = join(home, "host-code-restore.js");
+  await writeFile(command, `#!/usr/bin/env node
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+const request = JSON.parse(process.argv[process.argv.indexOf("--request-json") + 1]);
+const api = readFileSync(join(request.candidate_workspace, ${JSON.stringify(rel)}), "utf8");
+if (!api.includes("ORIGINAL_API = True")) {
+  console.error("source baseline was not restored before repair");
+  process.exit(1);
+}
+console.log(JSON.stringify({
+  schema_version: "across-host-code-iteration/1.0",
+  status: "passed",
+  model_backed: true,
+  provider: "fake-host",
+  model: "fake-loop-engineer",
+  decision_hash: "fake-restore",
+  summary: "Append bounded API marker after restoring source baseline",
+  patches: [{
+    path: ${JSON.stringify(rel)},
+    mode: "append",
+    content: "\\n# ACROSS RESTORE TEST START\\ndef restored_marker():\\n    return ORIGINAL_API\\n# ACROSS RESTORE TEST END\\n"
+  }]
+}));
+`, "utf8");
+
+  const spec = {
+    id: "entrypoint-restore-test",
+    pack_config: {
+      target_repo: "across-agents-assistant",
+      candidate_ecosystem: { repos: [{ id: "across-agents-assistant", source }] },
+      code_iteration: {
+        command: JSON.stringify(["node", command]),
+        allowed_patch_paths: [rel]
+      }
+    }
+  };
+  const actions = [
+    {
+      adapter: "candidate_ecosystem_acquire",
+      result: {
+        repos: [{ id: "across-agents-assistant", target: repo, source }],
+        model_lease: {}
+      }
+    },
+    {
+      adapter: "product_iteration_strategy",
+      result: {
+        selected_iteration: {
+          target_id: "restore-entrypoint",
+          target_repo: "across-agents-assistant",
+          goal: "Restore destructive API entrypoint rewrite before repair.",
+          allowed_patch_paths: [rel],
+          validation_commands: []
+        }
+      }
+    },
+    {
+      adapter: "candidate_ecosystem_validation",
+      result: {
+        status: "attention",
+        commands: [{
+          repo: "across-agents-assistant",
+          command: "candidate_quality",
+          status: "failed",
+          stderr: `destructive_product_entrypoint_rewrite: ${rel}: line 1: destructive rewrite`,
+          diagnostic: { failure_kind: "candidate_quality_failure" },
+          quality_findings: [{
+            id: "destructive_product_entrypoint_rewrite",
+            severity: "error",
+            path: rel,
+            line: 1,
+            message: "candidate rewrites a critical product entrypoint"
+          }]
+        }]
+      }
+    }
+  ];
+
+  const result = await runHostCodeIteration({ spec, run: { run_id: "run-entrypoint-restore" }, actions, env: process.env });
+  const content = await readFile(join(repo, rel), "utf8");
+  assert.equal(result.pre_repair_resets.length, 1);
+  assert.equal(result.pre_repair_resets[0].mode, "restore_source_baseline");
+  assert.match(content, /ORIGINAL_API = True/);
+  assert.match(content, /def restored_marker/);
+  assert.doesNotMatch(content, /truncated api replacement/);
 });
 
 test("semantic alignment review rejects self-proof-only candidate changes", async () => {
@@ -2888,6 +3283,68 @@ printf '{"status":"passed","candidate_id":"cand-app","bundle_id":"app.acrossagen
   assert.equal(promotion.candidate_app_lifecycle.status, "passed");
   assert.equal(promotion.candidate_app_lifecycle.llm_status.availability_source, "candidate_model_lease");
   assert.equal(promotion.promotion_ready, true);
+});
+
+test("candidate app lifecycle failure includes backend log tails", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-app-lifecycle-failure-"));
+  const repo = join(home, "candidate", "across-agents-assistant");
+  const script = join(home, "fake-candidate-app-lifecycle-fail.sh");
+  await mkdir(repo, { recursive: true });
+  await writeFile(script, `#!/bin/sh
+app_home=""
+out=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --app-home) app_home="$2"; shift 2 ;;
+    --output) out="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$app_home/logs" "$(dirname "$out")"
+printf '{"status":"failed","error":"outer lifecycle failed"}\\n' > "$out"
+printf 'startup prefix\\nreal backend crash tail: ImportError: cannot import name MCPToolRegistry\\n' > "$app_home/logs/backend_stdout.log"
+printf 'outer stderr tail\\n' >&2
+exit 7
+`, "utf8");
+  await exec("chmod", ["+x", script]);
+
+  const result = await runCandidateAppLifecycle({
+    spec: {
+      id: "candidate-app-lifecycle-failure",
+      pack_config: {
+        candidate_app_lifecycle: { required: true, command: JSON.stringify(["bash", script]) }
+      }
+    },
+    run: { run_id: "run-candidate-app-lifecycle-failure", outputs_dir: join(home, "outputs") },
+    actions: [
+      {
+        adapter: "candidate_ecosystem_acquire",
+        result: {
+          candidate_id: "cand-app-failure",
+          base_dir: join(home, "candidate"),
+          runtime_home: join(home, "runtime"),
+          app_home: join(home, "runtime", "aaa"),
+          app_dir: join(home, "candidate-apps", "cand-app-failure"),
+          runtime_preflight: { status: "passed", socket_path: join(home, "runtime", "aaa", "run", "across-agents.sock"), socket_path_bytes: 80 },
+          repos: [{ id: "across-agents-assistant", target: repo }]
+        }
+      },
+      {
+        adapter: "candidate_ecosystem_diff",
+        result: {
+          changed_files: ["across-agents-assistant/backend/src/across_agents_assistant/autopilot_workbench.py"]
+        }
+      }
+    ],
+    env: { ...process.env, ACROSS_HOME: home }
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.failure.code, 7);
+  assert.match(result.failure.message, /outer stderr tail/);
+  assert.match(result.failure.message, /real backend crash tail/);
+  assert.match(result.failure.backend_stdout_tail, /MCPToolRegistry/);
+  assert.match(result.failure.output_json_tail, /outer lifecycle failed/);
 });
 
 test("required candidate app lifecycle fails clearly when the host command is missing", async () => {
@@ -3114,6 +3571,44 @@ test("candidate diff flags isolated helper and test without product integration"
 
   assert.equal(review.status, "failed");
   assert.ok(review.blocking_reasons.some((reason) => reason.includes("unintegrated_candidate_helper")));
+});
+
+test("candidate diff blocks destructive product entrypoint rewrites before app lifecycle", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-entrypoint-rewrite-"));
+  const repo = join(home, "across-agents-assistant");
+  const apiPath = "backend/src/across_agents_assistant/api_server.py";
+  await createGitSource(repo, {
+    [apiPath]: Array.from({ length: 900 }, (_, index) => `def route_${index}():\n    return ${index}`).join("\n\n") + "\n"
+  });
+  await writeFile(join(repo, apiPath), "from fastapi import FastAPI\n\napp = FastAPI()\n", "utf8");
+
+  const acquire = {
+    adapter: "candidate_ecosystem_acquire",
+    result: { repos: [{ id: "across-agents-assistant", target: repo }] }
+  };
+  const spec = { id: "aaa-autonomous-self-iteration", pack_config: { target_repo: "across-agents-assistant" } };
+  const diff = await candidateEcosystemDiff({
+    spec,
+    run: { run_id: "run-destructive-entrypoint" },
+    actions: [acquire]
+  });
+  const finding = diff.repos[0].quality_findings.find((item) => item.id === "destructive_product_entrypoint_rewrite");
+
+  assert.ok(finding);
+  assert.equal(finding.severity, "error");
+  assert.equal(finding.path, apiPath);
+  assert.match(finding.excerpt, /\+\d+ -\d+/);
+
+  const validation = await validateCandidateEcosystem({
+    spec,
+    run: { run_id: "run-destructive-entrypoint" },
+    actions: [acquire, { adapter: "candidate_ecosystem_diff", result: diff }]
+  });
+  const qualityFailure = validation.commands.find((command) => command.command === "candidate_quality");
+  assert.equal(validation.status, "attention");
+  assert.ok(qualityFailure);
+  assert.match(qualityFailure.stderr, /destructive_product_entrypoint_rewrite/);
+  assert.equal(qualityFailure.diagnostic.failure_kind, "candidate_quality_failure");
 });
 
 test("semantic review rejects test-only candidates and scores reviewer evidence", async () => {

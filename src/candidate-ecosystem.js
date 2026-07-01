@@ -57,6 +57,7 @@ const DEFAULT_DENIED_PATHS = Object.freeze([
 ]);
 
 const AAA_BACKEND_API_IMPORT_CONTRACT_SMOKE = `import ast
+import sys
 from pathlib import Path
 
 PACKAGE = "across_agents_assistant"
@@ -99,35 +100,58 @@ def exports(path):
             names.add(node.target.id)
     return names
 
-tree = ast.parse(api_path.read_text(encoding="utf-8"), str(api_path))
+def is_internal_runtime_file(path):
+    value = str(path)
+    return (
+        value in {"backend/main.py", "backend/build.py"}
+        or value.startswith("backend/src/across_agents_assistant/")
+    ) and value.endswith(".py")
+
+def contract_paths():
+    paths = [api_path]
+    for arg in sys.argv[1:]:
+        path = Path(str(arg))
+        if is_internal_runtime_file(path) and path.exists():
+            paths.append(path)
+    unique = []
+    seen = set()
+    for path in paths:
+        key = str(path)
+        if key not in seen:
+            seen.add(key)
+            unique.append(path)
+    return unique
+
 missing = []
 checked = 0
-for node in tree.body:
-    if not isinstance(node, ast.ImportFrom):
-        continue
-    module = node.module or ""
-    if node.level == 1:
-        target_module = f"{PACKAGE}.{module}" if module else PACKAGE
-    elif node.level > 1:
-        continue
-    elif module.startswith(f"{PACKAGE}."):
-        target_module = module
-    else:
-        continue
-    path = module_path(target_module)
-    if not path:
-        missing.append(f"{target_module}.__module__")
-        continue
-    exported = exports(path)
-    checked += 1
-    for alias in node.names:
-        if alias.name == "*":
+for checked_path in contract_paths():
+    tree = ast.parse(checked_path.read_text(encoding="utf-8"), str(checked_path))
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom):
             continue
-        if alias.name not in exported and not has_submodule(target_module, alias.name):
-            missing.append(f"{target_module}.{alias.name}")
+        module = node.module or ""
+        if node.level == 1:
+            target_module = f"{PACKAGE}.{module}" if module else PACKAGE
+        elif node.level > 1:
+            continue
+        elif module.startswith(f"{PACKAGE}."):
+            target_module = module
+        else:
+            continue
+        path = module_path(target_module)
+        if not path:
+            missing.append(f"{checked_path}: {target_module}.__module__")
+            continue
+        exported = exports(path)
+        checked += 1
+        for alias in node.names:
+            if alias.name == "*":
+                continue
+            if alias.name not in exported and not has_submodule(target_module, alias.name):
+                missing.append(f"{checked_path}: {target_module}.{alias.name}")
 if missing:
     raise ImportError("missing internal API import(s): " + ", ".join(sorted(missing)))
-print("AAA backend API import contract OK", checked)`;
+print("AAA backend API/runtime import contract OK", checked)`;
 
 const AAA_BACKEND_RUNTIME_DEPENDENCY_IMPORT_CONTRACT_SMOKE = `import ast
 import re
@@ -485,6 +509,14 @@ export async function runHostCodeIteration({ spec, run, actions, env = process.e
     candidate_model_lease: requestCandidateModelLease(acquire?.model_lease),
     model_policy: modelPolicyForRole(spec, "builder")
   };
+  const preRepairResets = await restoreDestructiveEntryPointRewrites({
+    repo,
+    targetRepo,
+    source: request.source_repository,
+    allowedPaths,
+    spec,
+    validationFeedback: request.validation_feedback
+  });
   const response = await runJsonCommand(command, ["--request-json", JSON.stringify(request)], {
     env,
     cwd: repo.target,
@@ -505,10 +537,7 @@ export async function runHostCodeIteration({ spec, run, actions, env = process.e
     const before = await readOptional(target);
     const content = String(patch.content || "");
     if (!content.trim()) throw ecosystemFailure("host_code_iteration", `Patch content is empty for ${rel}`);
-    let next = content;
-    if (patch.mode === "append") {
-      next = `${before || ""}${before && !before.endsWith("\n") ? "\n" : ""}${content}`;
-    }
+    const next = applyCandidatePatch(before || "", patch, rel);
     await writeFile(target, next, "utf8");
     applied.push({
       repo: targetRepo,
@@ -519,8 +548,17 @@ export async function runHostCodeIteration({ spec, run, actions, env = process.e
       bytes_after: Buffer.byteLength(next)
     });
   }
+  const changed = applied.some((item) => item.changed) || preRepairResets.some((item) => item.changed);
+  if (!changed && request.validation_feedback.length) {
+    const latest = request.validation_feedback[0] || {};
+    const diagnosticKind = latest.diagnostic?.failure_kind || latest.type || "validation_feedback";
+    throw ecosystemFailure(
+      "host_code_iteration",
+      `Host code iteration repair produced no file changes while ${diagnosticKind} remains unresolved.`
+    );
+  }
   return {
-    status: applied.some((item) => item.changed) ? "passed" : "attention",
+    status: changed ? "passed" : "attention",
     candidate_id: config.candidate_id,
     target_repo: targetRepo,
     workspace: repo.target,
@@ -539,6 +577,7 @@ export async function runHostCodeIteration({ spec, run, actions, env = process.e
       risk: strategy.risk || null
     } : null,
     changed_files: applied.filter((item) => item.changed).map((item) => `${item.repo}/${item.path}`),
+    pre_repair_resets: preRepairResets,
     patches: applied
   };
 }
@@ -804,6 +843,7 @@ export async function candidateEcosystemDiff({ spec, run, actions, env = process
     for (const path of changed) {
       qualityFindings.push(...await sourceQualityFindings(repo.target, path));
     }
+    qualityFindings.push(...destructiveProductEntrypointFindings(repo.id, numstatText));
     qualityFindings.push(...candidateIntegrationQualityFindings(spec, repo.id, changed, untracked));
     repoDiffs.push({
       id: repo.id,
@@ -882,7 +922,15 @@ export async function validateCandidateEcosystem({ spec, run, actions, env = pro
         status: "failed",
         exit_code: error.code ?? null,
         stdout: String(error.stdout || "").slice(0, 6000),
-        stderr: String(error.stderr || error.message || "").slice(0, 6000)
+        stderr: String(error.stderr || error.message || "").slice(0, 6000),
+        diagnostic: validationFailureDiagnostic({
+          command: String(command.command || ""),
+          args: asArray(command.args).map(String),
+          stdout: error.stdout,
+          stderr: error.stderr,
+          message: error.message,
+          exitCode: error.code ?? null
+        })
       });
     }
   }
@@ -929,10 +977,62 @@ function candidateQualityValidationResults(actions) {
           finding.message || "",
           finding.excerpt || ""
         ].filter(Boolean).join(": ")).join("\n").slice(0, 6000),
+        diagnostic: {
+          failure_kind: "candidate_quality_failure",
+          failure_summary: "Candidate quality findings blocked validation.",
+          exit_code: null
+        },
         quality_findings: findings.slice(0, 20)
       };
     })
     .filter(Boolean);
+}
+
+function validationFailureDiagnostic({ command = "", args = [], stdout = "", stderr = "", message = "", exitCode = null } = {}) {
+  const combined = [stderr, stdout, message, command, ...asArray(args)].map((item) => String(item || "")).join("\n");
+  const lowered = combined.toLowerCase();
+  const diagnostic = {
+    failure_kind: "validation_command_failed",
+    failure_summary: "Validation command failed.",
+    exit_code: exitCode
+  };
+  if (/unsupported operand type\(s\) for \|/.test(lowered)
+    || /requires python 3\.10|requires python 3\.11|python 3\.10\+|python 3\.11\+/.test(lowered)) {
+    return {
+      ...diagnostic,
+      failure_kind: "python_version_incompatible",
+      failure_summary: "Candidate uses syntax or APIs newer than the validation Python runtime."
+    };
+  }
+  if (/modulenotfounderror|importerror/.test(lowered)) {
+    return {
+      ...diagnostic,
+      failure_kind: "candidate_import_failure",
+      failure_summary: "Candidate validation failed while importing generated code or tests."
+    };
+  }
+  if (/assertionerror|pytest failed|test failed/.test(lowered)) {
+    return {
+      ...diagnostic,
+      failure_kind: "candidate_test_assertion",
+      failure_summary: "Candidate tests or assertions failed."
+    };
+  }
+  if (/traceback|typeerror|valueerror|syntaxerror|nameerror/.test(lowered)) {
+    return {
+      ...diagnostic,
+      failure_kind: "candidate_exception",
+      failure_summary: "Candidate validation raised a language/runtime exception."
+    };
+  }
+  if (/timed out|etimedout/.test(lowered)) {
+    return {
+      ...diagnostic,
+      failure_kind: "validation_timeout",
+      failure_summary: "Validation command timed out."
+    };
+  }
+  return diagnostic;
 }
 
 export async function runCandidateAppLifecycle({ spec, run, actions, env = process.env }) {
@@ -1038,6 +1138,19 @@ export async function runCandidateAppLifecycle({ spec, run, actions, env = proce
       failure: passed ? null : { code: FAILURE_CODES.GATE_FAILED, message: "Candidate app lifecycle did not pass." }
     };
   } catch (error) {
+    const stderrTail = tailText(error.stderr || "", 4000);
+    const stdoutTail = tailText(error.stdout || "", 4000);
+    const outputTail = await readOptionalTail(outputPath, 4000);
+    const backendStdoutTail = await readOptionalTail(join(config.app_home, "logs", "backend_stdout.log"), 4000);
+    const backendStderrTail = await readOptionalTail(join(config.app_home, "logs", "backend_stderr.log"), 4000);
+    const failureParts = [
+      stderrTail && `stderr_tail:\n${stderrTail}`,
+      stdoutTail && `stdout_tail:\n${stdoutTail}`,
+      outputTail && `output_json_tail:\n${outputTail}`,
+      backendStdoutTail && `backend_stdout_tail:\n${backendStdoutTail}`,
+      backendStderrTail && `backend_stderr_tail:\n${backendStderrTail}`,
+      error.message && `error_message:\n${error.message}`
+    ].filter(Boolean);
     return {
       status: "failed",
       required: required || productRuntimeTouched,
@@ -1050,7 +1163,12 @@ export async function runCandidateAppLifecycle({ spec, run, actions, env = proce
       app_home: config.app_home,
       failure: {
         code: error.code || FAILURE_CODES.GATE_FAILED,
-        message: `Candidate app lifecycle command failed: ${String(error.stderr || error.message || error).slice(0, 1000)}`
+        message: `Candidate app lifecycle command failed: ${tailText(failureParts.join("\n\n") || String(error), 6000)}`,
+        stderr_tail: stderrTail || null,
+        stdout_tail: stdoutTail || null,
+        output_json_tail: outputTail || null,
+        backend_stdout_tail: backendStdoutTail || null,
+        backend_stderr_tail: backendStderrTail || null
       }
     };
   }
@@ -1075,7 +1193,7 @@ function implicitCandidateValidationCommands({ actions = [], repos = [] } = {}) 
   if (!candidateTouchesAaaBackendRuntime(changedFiles)) return [];
   if (!existsSync(join(aaaRepo.target, "backend", "src", "across_agents_assistant", "api_server.py"))) return [];
   return [
-    aaaBackendApiImportSmokeCommand(),
+    aaaBackendApiImportSmokeCommand(changedFiles),
     aaaBackendRuntimeDependencyImportSmokeCommand(changedFiles)
   ];
 }
@@ -1089,11 +1207,21 @@ function candidateTouchesAaaBackendRuntime(changedFiles) {
   });
 }
 
-function aaaBackendApiImportSmokeCommand() {
+function aaaBackendApiImportSmokeCommand(changedFiles = []) {
+  const runtimeFiles = asArray(changedFiles)
+    .map((file) => String(file || ""))
+    .filter((file) => file.startsWith("across-agents-assistant/"))
+    .map((file) => file.slice("across-agents-assistant/".length))
+    .filter((file) => (
+      file === "backend/main.py"
+      || file === "backend/build.py"
+      || file.startsWith("backend/src/across_agents_assistant/")
+    ))
+    .filter((file) => file.endsWith(".py"));
   return {
     repo: "across-agents-assistant",
     command: "python3",
-    args: ["-c", AAA_BACKEND_API_IMPORT_CONTRACT_SMOKE],
+    args: ["-c", AAA_BACKEND_API_IMPORT_CONTRACT_SMOKE, ...runtimeFiles],
     timeout_ms: 60000,
     implicit: true,
     summary: "AAA backend API import contract smoke"
@@ -1764,7 +1892,13 @@ function normalizeHostReviewDecision(response = {}) {
 export function ecosystemGateStatus(id, { actions }) {
   if (id === "research_iteration_strategy_ready") {
     const strategy = actionResult(actions, "product_iteration_strategy");
-    return [strategy?.status === "passed" && strategy?.selected_iteration?.goal, "Research strategy selected a product iteration.", "Research strategy did not select an implementable product iteration."];
+    const selected = strategy?.selected_iteration || null;
+    const admitted = !strategy?.admission?.status || strategy.admission.status === "passed";
+    return [
+      Boolean(selected?.target_id && selected?.goal && admitted),
+      "Research strategy selected an admitted product iteration.",
+      "Research strategy did not select an implementable product iteration."
+    ];
   }
   if (id === "four_repo_manifest_written") {
     const acquire = actionResult(actions, "candidate_ecosystem_acquire");
@@ -1878,6 +2012,11 @@ function isGeneratedCandidateArtifact(path) {
 }
 
 function parseDocChurn(numstatText) {
+  return parseNumstat(numstatText)
+    .filter((item) => isDocumentationPath(item.path));
+}
+
+function parseNumstat(numstatText) {
   return String(numstatText || "")
     .split("\n")
     .map((line) => line.trim())
@@ -1891,7 +2030,7 @@ function parseDocChurn(numstatText) {
         deletions: Number(deletions)
       };
     })
-    .filter((item) => Number.isFinite(item.additions) && Number.isFinite(item.deletions) && isDocumentationPath(item.path));
+    .filter((item) => Number.isFinite(item.additions) && Number.isFinite(item.deletions));
 }
 
 function documentationRewriteFindings(diff, { maxDeletions, maxRatio }) {
@@ -1903,6 +2042,60 @@ function documentationRewriteFindings(diff, { maxDeletions, maxRatio }) {
     item.deletions > maxDeletions
     && item.deletions > Math.max(1, item.additions) * maxRatio
   ));
+}
+
+const DESTRUCTIVE_PRODUCT_ENTRYPOINT_RULES = Object.freeze([
+  {
+    repo: "across-agents-assistant",
+    path: "backend/src/across_agents_assistant/api_server.py",
+    minDeletions: 500,
+    maxDeletionToAdditionRatio: 8
+  },
+  {
+    repo: "across-agents-assistant",
+    path: "backend/src/across_agents_assistant/autopilot_workbench.py",
+    minDeletions: 120,
+    maxDeletionToAdditionRatio: 8
+  },
+  {
+    repo: "across-agents-assistant",
+    path: "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
+    minDeletions: 120,
+    maxDeletionToAdditionRatio: 8
+  },
+  {
+    repo: "across-autopilot",
+    path: "src/candidate-ecosystem.js",
+    minDeletions: 300,
+    maxDeletionToAdditionRatio: 8
+  },
+  {
+    repo: "across-autopilot",
+    path: "src/supervisor.js",
+    minDeletions: 300,
+    maxDeletionToAdditionRatio: 8
+  }
+]);
+
+function destructiveProductEntrypointFindings(repoId, numstatText) {
+  const churnByPath = new Map(parseNumstat(numstatText).map((item) => [item.path, item]));
+  return DESTRUCTIVE_PRODUCT_ENTRYPOINT_RULES
+    .filter((rule) => rule.repo === repoId)
+    .map((rule) => {
+      const churn = churnByPath.get(rule.path);
+      if (!churn) return null;
+      const ratio = churn.deletions / Math.max(1, churn.additions);
+      if (churn.deletions < rule.minDeletions || ratio < rule.maxDeletionToAdditionRatio) return null;
+      return {
+        id: "destructive_product_entrypoint_rewrite",
+        severity: "error",
+        path: rule.path,
+        line: 1,
+        message: "destructive_product_entrypoint_rewrite: candidate rewrites a critical product entrypoint with high deletion-to-addition churn",
+        excerpt: `${rule.path}: +${churn.additions} -${churn.deletions} ratio=${ratio.toFixed(1)}`
+      };
+    })
+    .filter(Boolean);
 }
 
 async function sourceQualityFindings(repoRoot, path) {
@@ -2929,7 +3122,10 @@ function validationFeedbackForCodeIteration(actions) {
       status: item.status || "failed",
       exit_code: item.exit_code ?? null,
       stdout: String(item.stdout || "").slice(0, 2000),
-      stderr: String(item.stderr || "").slice(0, 4000)
+      stderr: String(item.stderr || "").slice(0, 4000),
+      summary: item.summary || null,
+      diagnostic: item.diagnostic || null,
+      quality_findings: asArray(item.quality_findings).slice(0, 20)
     })) : [];
   const review = [...actions]
     .reverse()
@@ -2945,6 +3141,51 @@ function validationFeedbackForCodeIteration(actions) {
   return [...commandFeedback, ...reviewFeedback];
 }
 
+async function restoreDestructiveEntryPointRewrites({ repo, targetRepo, source, allowedPaths, spec, validationFeedback = [] }) {
+  if (!source || !repo?.target) return [];
+  const paths = destructiveEntryPointPathsFromFeedback(validationFeedback, targetRepo);
+  const restored = [];
+  for (const rel of paths) {
+    assertAllowed(rel, allowedPaths);
+    assertNotDenied(rel, spec);
+    const sourcePath = ensureInside(source, resolve(source, rel));
+    const targetPath = ensureInside(repo.target, resolve(repo.target, rel));
+    if (!existsSync(sourcePath)) continue;
+    const before = await readOptional(targetPath);
+    const sourceContent = await readOptional(sourcePath);
+    if (!sourceContent) continue;
+    await mkdir(dirname(targetPath), { recursive: true });
+    await writeFile(targetPath, sourceContent, "utf8");
+    restored.push({
+      repo: targetRepo,
+      path: rel,
+      mode: "restore_source_baseline",
+      changed: before !== sourceContent,
+      bytes_before: Buffer.byteLength(before || ""),
+      bytes_after: Buffer.byteLength(sourceContent)
+    });
+  }
+  return restored;
+}
+
+function destructiveEntryPointPathsFromFeedback(validationFeedback = [], targetRepo = "") {
+  const paths = new Set();
+  for (const item of asArray(validationFeedback)) {
+    const repo = String(item?.repo || targetRepo || "");
+    if (targetRepo && repo && repo !== targetRepo) continue;
+    for (const finding of asArray(item?.quality_findings)) {
+      if (finding?.id === "destructive_product_entrypoint_rewrite" && finding.path) {
+        paths.add(safeRelativePath(finding.path));
+      }
+    }
+    const stderr = String(item?.stderr || "");
+    for (const match of stderr.matchAll(/destructive_product_entrypoint_rewrite:\s+([^\s:]+):/g)) {
+      paths.add(safeRelativePath(match[1]));
+    }
+  }
+  return [...paths];
+}
+
 async function readManifest(path) {
   return JSON.parse(await readFile(path, "utf8"));
 }
@@ -2956,6 +3197,45 @@ async function readOptional(path) {
     if (error.code === "ENOENT") return "";
     throw error;
   }
+}
+
+async function readOptionalTail(path, maxLength = 4000) {
+  const content = await readOptional(path);
+  return tailText(content, maxLength);
+}
+
+function tailText(value, maxLength = 4000) {
+  const text = String(value || "");
+  if (!text) return "";
+  return text.length > maxLength ? text.slice(-maxLength) : text;
+}
+
+function applyCandidatePatch(before, patch, rel) {
+  const content = String(patch.content || "");
+  const mode = patch.mode || "overwrite";
+  if (mode === "overwrite") return content;
+  if (mode === "append") {
+    return `${before || ""}${before && !before.endsWith("\n") ? "\n" : ""}${content}`;
+  }
+  if (mode !== "upsert_between_markers") {
+    throw ecosystemFailure("host_code_iteration", `Unsupported patch mode for ${rel}: ${mode}`);
+  }
+
+  const markerStart = String(patch.marker_start || "").trim();
+  const markerEnd = String(patch.marker_end || "").trim();
+  if (!markerStart || !markerEnd) {
+    throw ecosystemFailure("host_code_iteration", `Patch ${rel} uses upsert_between_markers without marker_start and marker_end.`);
+  }
+  const block = `${markerStart}\n${content.trimEnd()}\n${markerEnd}\n`;
+  const startIndex = before.indexOf(markerStart);
+  const endIndex = before.indexOf(markerEnd, startIndex >= 0 ? startIndex + markerStart.length : 0);
+  if (startIndex >= 0 && endIndex >= 0) {
+    const afterEnd = endIndex + markerEnd.length;
+    const prefix = before.slice(0, startIndex);
+    const suffix = before.slice(afterEnd).replace(/^\n?/, "");
+    return `${prefix}${block}${suffix}`;
+  }
+  return `${before || ""}${before && !before.endsWith("\n") ? "\n" : ""}\n${block}`;
 }
 
 function snapshotRootsForRepo(repoId) {

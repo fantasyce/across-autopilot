@@ -128,6 +128,102 @@ test("ordinary candidate failures do not enqueue platform self-repair", () => {
   assert.equal(diagnosis.status, "not_applicable");
 });
 
+test("candidate quality blocks are not promoted to platform self-repair", () => {
+  const diagnosis = diagnosePlatformSelfRepair({
+    spec: {
+      id: "aaa-autonomous-self-iteration",
+      failure_policy: { platform_self_repair: { enabled: true } }
+    },
+    failedRun: {
+      run_id: "run-unintegrated-helper",
+      spec_id: "aaa-autonomous-self-iteration",
+      trigger_event: { payload: { auto_platform_self_repair: true } },
+      failure: {
+        code: "gate.failed",
+        adapter_id: "candidate_ecosystem_validation",
+        message: "Candidate ecosystem validation failed."
+      }
+    },
+    evidence: {
+      actions: [
+        {
+          adapter: "candidate_ecosystem_validation",
+          status: "attention",
+          failure: { code: "gate.failed", message: "Candidate ecosystem validation failed." },
+          result: {
+            commands: [
+              {
+                status: "failed",
+                command: "candidate_quality",
+                args: [],
+                stderr: "unintegrated_candidate_helper: candidate adds isolated product helper and tests without modifying an existing product entrypoint"
+              },
+              {
+                status: "failed",
+                command: "python3",
+                args: ["-c", "run generated candidate tests"],
+                stderr: "Internal operation failed. See local backend logs for details."
+              }
+            ]
+          }
+        }
+      ],
+      gates: []
+    }
+  });
+
+  assert.equal(diagnosis.eligible, false);
+  assert.equal(diagnosis.category, "candidate_code_failure");
+  assert.equal(diagnosis.status, "not_applicable");
+  assert.equal(diagnosis.target_id, null);
+});
+
+test("candidate validation internal failures without platform signals do not enqueue self-repair", () => {
+  const diagnosis = diagnosePlatformSelfRepair({
+    spec: {
+      id: "aaa-autonomous-self-iteration",
+      failure_policy: { platform_self_repair: { enabled: true } }
+    },
+    failedRun: {
+      run_id: "run-internal-candidate-validation",
+      spec_id: "aaa-autonomous-self-iteration",
+      trigger_event: { payload: { auto_platform_self_repair: true } },
+      failure: {
+        code: "gate.failed",
+        adapter_id: "candidate_ecosystem_validation",
+        message: "Candidate ecosystem validation failed."
+      }
+    },
+    evidence: {
+      actions: [
+        {
+          adapter: "candidate_ecosystem_validation",
+          status: "attention",
+          result: {
+            commands: [
+              {
+                status: "failed",
+                command: "python3",
+                args: ["-c", "run generated candidate tests"],
+                stderr: "Internal operation failed. See local backend logs for details.",
+                diagnostic: {
+                  failure_kind: "python_version_incompatible",
+                  failure_summary: "Candidate uses syntax or APIs newer than the validation Python runtime."
+                }
+              }
+            ]
+          }
+        }
+      ],
+      gates: []
+    }
+  });
+
+  assert.equal(diagnosis.eligible, false);
+  assert.equal(diagnosis.category, "candidate_code_failure");
+  assert.equal(diagnosis.target_id, null);
+});
+
 test("candidate validation tracebacks are not upgraded by later app lifecycle failures", () => {
   const diagnosis = diagnosePlatformSelfRepair({
     spec: {
