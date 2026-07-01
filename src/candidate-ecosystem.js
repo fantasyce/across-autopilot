@@ -1,14 +1,15 @@
-import { execFile, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
-import { componentDataHome, ecosystemHome } from "./paths.js";
+import { componentDataHome, ecosystemHome, pluginRoot } from "./paths.js";
 import { asArray, compactTimestamp, readJson, stableJson, unique } from "./json-utils.js";
 import { FAILURE_CODES, LoopFailure } from "./failures.js";
 import { parseCommand, resolveCommand, runJsonCommand } from "./process-client.js";
 import { requestCandidateModelLease, writeCandidateModelLease } from "./model-lease.js";
+import { redactTriggerPayload } from "./platform-self-repair.js";
 import {
   autonomousTargetsFromBacklog,
   prepareAutonomousLoopState,
@@ -54,6 +55,237 @@ const DEFAULT_DENIED_PATHS = Object.freeze([
   "secrets",
   "secrets.json"
 ]);
+
+const AAA_BACKEND_API_IMPORT_CONTRACT_SMOKE = `import ast
+from pathlib import Path
+
+PACKAGE = "across_agents_assistant"
+SRC = Path("backend/src")
+api_path = SRC / PACKAGE / "api_server.py"
+
+def module_path(module):
+    rel = Path(*module.split("."))
+    py = SRC / rel.with_suffix(".py")
+    if py.exists():
+        return py
+    init = SRC / rel / "__init__.py"
+    if init.exists():
+        return init
+    directory = SRC / rel
+    if directory.is_dir():
+        return directory
+    return None
+
+def has_submodule(module, name):
+    rel = Path(*f"{module}.{name}".split("."))
+    return (SRC / rel.with_suffix(".py")).exists() or (SRC / rel / "__init__.py").exists()
+
+def exports(path):
+    if path.is_dir():
+        return {child.stem for child in path.glob("*.py") if child.name != "__init__.py"} | {child.name for child in path.iterdir() if child.is_dir()}
+    tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
+    names = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+    return names
+
+tree = ast.parse(api_path.read_text(encoding="utf-8"), str(api_path))
+missing = []
+checked = 0
+for node in tree.body:
+    if not isinstance(node, ast.ImportFrom):
+        continue
+    module = node.module or ""
+    if node.level == 1:
+        target_module = f"{PACKAGE}.{module}" if module else PACKAGE
+    elif node.level > 1:
+        continue
+    elif module.startswith(f"{PACKAGE}."):
+        target_module = module
+    else:
+        continue
+    path = module_path(target_module)
+    if not path:
+        missing.append(f"{target_module}.__module__")
+        continue
+    exported = exports(path)
+    checked += 1
+    for alias in node.names:
+        if alias.name == "*":
+            continue
+        if alias.name not in exported and not has_submodule(target_module, alias.name):
+            missing.append(f"{target_module}.{alias.name}")
+if missing:
+    raise ImportError("missing internal API import(s): " + ", ".join(sorted(missing)))
+print("AAA backend API import contract OK", checked)`;
+
+const AAA_BACKEND_RUNTIME_DEPENDENCY_IMPORT_CONTRACT_SMOKE = `import ast
+import re
+import sys
+from pathlib import Path
+
+PACKAGE = "across_agents_assistant"
+SRC = Path("backend/src")
+REQUIREMENT_FILES = [
+    Path("backend/requirements.txt"),
+    Path("backend/requirements_no_pyobjc.txt"),
+    Path("backend/requirements_filtered.txt"),
+]
+
+IMPORT_NAME_OVERRIDES = {
+    "beautifulsoup4": {"bs4"},
+    "edge-tts": {"edge_tts"},
+    "faster-whisper": {"faster_whisper"},
+    "pillow": {"PIL"},
+    "pyobjc-framework-AppKit": {"AppKit"},
+    "pyobjc-framework-Vision": {"Vision"},
+    "pywebview": {"webview"},
+    "python-dotenv": {"dotenv"},
+}
+
+# These are installed explicitly by AAA packaging because direct runtime code
+# imports them even when they enter through another dependency family.
+PACKAGED_RUNTIME_IMPORTS = {"anyio", "pydantic", "starlette"}
+COMMON_STDLIB_IMPORTS = {
+    "__future__", "abc", "argparse", "array", "asyncio", "atexit", "base64",
+    "collections", "concurrent", "contextlib", "copy", "csv", "dataclasses",
+    "datetime", "decimal", "enum", "errno", "faulthandler", "functools",
+    "hashlib", "hmac", "html", "http", "importlib", "inspect", "io",
+    "itertools", "json", "logging", "math", "mimetypes", "multiprocessing",
+    "operator", "os", "pathlib", "pickle", "platform", "plistlib", "queue",
+    "random", "re", "secrets", "shlex", "shutil", "signal", "socket",
+    "sqlite3", "ssl", "statistics", "string", "subprocess", "sys",
+    "tempfile", "threading", "time", "traceback", "types", "typing",
+    "urllib", "uuid", "warnings", "weakref", "zipfile"
+}
+
+def requirement_name(line):
+    text = line.strip()
+    if not text or text.startswith("#") or text.startswith("-"):
+        return None
+    text = text.split("#", 1)[0].strip()
+    match = re.match(r"([A-Za-z0-9_.-]+)", text)
+    return match.group(1) if match else None
+
+def allowed_import_roots():
+    roots = {PACKAGE, *PACKAGED_RUNTIME_IMPORTS}
+    roots.update(COMMON_STDLIB_IMPORTS)
+    roots.update(getattr(sys, "stdlib_module_names", set()))
+    for path in REQUIREMENT_FILES:
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            name = requirement_name(line)
+            if not name:
+                continue
+            roots.add(name.replace("-", "_"))
+            roots.add(name.split("-", 1)[0])
+            roots.update(IMPORT_NAME_OVERRIDES.get(name, set()))
+    return roots
+
+def parents(tree):
+    parent = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parent[child] = node
+    return parent
+
+def inside_try(node, parent):
+    current = node
+    while current in parent:
+        current = parent[current]
+        if isinstance(current, ast.Try):
+            return True
+    return False
+
+def import_roots(path):
+    tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
+    parent = parents(tree)
+    roots = []
+    for node in ast.walk(tree):
+        if inside_try(node, parent):
+            continue
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                roots.append(alias.name.split(".", 1)[0])
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                continue
+            module = node.module or ""
+            if module:
+                roots.append(module.split(".", 1)[0])
+    return roots
+
+def is_runtime_file(arg):
+    value = str(arg)
+    return (
+        value in {"backend/main.py", "backend/build.py"}
+        or value.startswith("backend/src/across_agents_assistant/")
+    ) and value.endswith(".py")
+
+allowed = allowed_import_roots()
+missing = []
+checked = 0
+for arg in sys.argv[1:]:
+    if not is_runtime_file(arg):
+        continue
+    path = Path(arg)
+    if not path.exists():
+        continue
+    checked += 1
+    for root in import_roots(path):
+        if root not in allowed:
+            missing.append(f"{root} in {arg}")
+if missing:
+    raise ImportError(
+        "undeclared AAA backend runtime import(s): "
+        + ", ".join(sorted(set(missing)))
+        + "; declare the dependency in backend/requirements*.txt and packaging, or reuse the existing packaged backend surface"
+    )
+print("AAA backend runtime dependency import contract OK", checked)`;
+
+const SNAPSHOT_ROOTS_BY_REPO = Object.freeze({
+  "across-agents-assistant": [
+    "backend/src",
+    "backend/tests",
+    "backend/assets",
+    "backend/build.py",
+    "backend/backend.spec",
+    "backend/main.py",
+    "backend/pyproject.toml",
+    "backend/requirements.txt",
+    "backend/requirements_no_pyobjc.txt",
+    "backend/requirements_filtered.txt",
+    "macOS-Client/Sources",
+    "macOS-Client/Tests",
+    "macOS-Client/Package.swift",
+    "macOS-Client/Package.resolved",
+    "macOS-Client/Entitlements.entitlements",
+    "macOS-Client/run.sh",
+    "scripts",
+    "docs",
+    "README.md",
+    "CHANGELOG.md",
+    "AGENTS.md",
+    "OPEN_SOURCE_RELEASE_HANDBOOK.md",
+    "across.product.json",
+    "build_app.sh",
+    ".gitignore"
+  ],
+  "across-autopilot": ["src", "tests", "examples", "docs", "README.md", "CHANGELOG.md", "AUTOPILOT_RFC.md", "package.json", "package-lock.json", ".gitignore"],
+  "across-orchestrator": ["src", "tests", "docs", "README.md", "CHANGELOG.md", "pyproject.toml", "requirements.txt", ".gitignore"],
+  "across-context": ["src", "tests", "docs", "README.md", "CHANGELOG.md", "package.json", "package-lock.json", ".gitignore"]
+});
 
 export const CANDIDATE_SOCKET_RELATIVE_PATH = Object.freeze(["aaa", "run", "across-agents.sock"]);
 export const MAX_MACOS_UNIX_SOCKET_PATH_BYTES = 103;
@@ -339,6 +571,7 @@ export async function runProductIterationStrategy({ spec, run, sources, actions,
     recalled_memory: asArray(recalledMemory).slice(0, 10),
     product_context: {
       ...(spec.pack_config?.research_strategy?.product_context || {}),
+      trigger_payload: redactTriggerPayload(run?.trigger_event?.payload || {}),
       autonomous_loop_state: autonomousState ? compactAutonomousState(autonomousState) : null
     },
     target_catalog: targetCatalog,
@@ -359,7 +592,8 @@ export async function runProductIterationStrategy({ spec, run, sources, actions,
   });
   const strategy = normalizeStrategyResponse(response, spec, targetCatalog, {
     allowGeneratedTargets: generationPolicy.allow_model_generated_targets,
-    minimumCandidates: generationPolicy.minimum_candidates
+    minimumCandidates: generationPolicy.minimum_candidates,
+    candidateWorkspace: repo.target
   });
   const admittedBacklog = autonomousState
     ? await recordGeneratedAutonomousBacklog({
@@ -570,6 +804,7 @@ export async function candidateEcosystemDiff({ spec, run, actions, env = process
     for (const path of changed) {
       qualityFindings.push(...await sourceQualityFindings(repo.target, path));
     }
+    qualityFindings.push(...candidateIntegrationQualityFindings(spec, repo.id, changed, untracked));
     repoDiffs.push({
       id: repo.id,
       path: repo.target,
@@ -599,8 +834,12 @@ export async function validateCandidateEcosystem({ spec, run, actions, env = pro
   assertCandidateRuntimePreflight(config);
   const repos = acquire?.repos || (await readManifest(config.manifest_path)).repos || [];
   const strategy = selectedIterationFromActions(actions);
-  const commands = asArray(strategy?.validation_commands || spec.pack_config?.candidate_validation?.commands || spec.pack_config?.validation_commands);
-  const results = [];
+  const explicitCommands = asArray(strategy?.validation_commands || spec.pack_config?.candidate_validation?.commands || spec.pack_config?.validation_commands);
+  const commands = dedupeValidationCommands([
+    ...explicitCommands,
+    ...implicitCandidateValidationCommands({ spec, actions, repos })
+  ]);
+  const results = [...candidateQualityValidationResults(actions)];
 
   for (const command of commands) {
     const repoId = command.repo || spec.pack_config?.target_repo || "across-agents-assistant";
@@ -626,6 +865,8 @@ export async function validateCandidateEcosystem({ spec, run, actions, env = pro
         repo: repoId,
         command: String(command.command),
         args: asArray(command.args).map(String),
+        implicit: Boolean(command.implicit),
+        summary: command.summary || null,
         status: "passed",
         exit_code: 0,
         stdout: String(stdout || "").slice(0, 6000),
@@ -636,6 +877,8 @@ export async function validateCandidateEcosystem({ spec, run, actions, env = pro
         repo: repoId,
         command: String(command.command || ""),
         args: asArray(command.args).map(String),
+        implicit: Boolean(command.implicit),
+        summary: command.summary || null,
         status: "failed",
         exit_code: error.code ?? null,
         stdout: String(error.stdout || "").slice(0, 6000),
@@ -645,10 +888,10 @@ export async function validateCandidateEcosystem({ spec, run, actions, env = pro
   }
 
   const sourceUnchanged = await verifySourceUnchanged(repos);
-  const failed = results.filter((item) => item.status !== "passed");
   if (!commands.length) {
     results.push({ repo: null, command: null, args: [], status: "passed", summary: "No explicit validation commands declared." });
   }
+  const failed = results.filter((item) => item.status !== "passed");
   return {
     status: failed.length || !sourceUnchanged.unchanged ? "attention" : "passed",
     candidate_id: config.candidate_id,
@@ -661,6 +904,35 @@ export async function validateCandidateEcosystem({ spec, run, actions, env = pro
       ? { code: FAILURE_CODES.GATE_FAILED, message: "Candidate ecosystem validation failed." }
       : null
   };
+}
+
+function candidateQualityValidationResults(actions) {
+  const diff = actionResult(actions, "candidate_ecosystem_diff") || {};
+  return asArray(diff.repos)
+    .map((repo) => {
+      const findings = asArray(repo.quality_findings)
+        .filter((finding) => String(finding?.severity || "").toLowerCase() === "error");
+      if (!findings.length) return null;
+      return {
+        repo: repo.id || null,
+        command: "candidate_quality",
+        args: [],
+        implicit: true,
+        summary: "Candidate quality findings",
+        status: "failed",
+        exit_code: null,
+        stdout: "",
+        stderr: findings.map((finding) => [
+          finding.id || "candidate_quality_error",
+          finding.path || "",
+          finding.line ? `line ${finding.line}` : "",
+          finding.message || "",
+          finding.excerpt || ""
+        ].filter(Boolean).join(": ")).join("\n").slice(0, 6000),
+        quality_findings: findings.slice(0, 20)
+      };
+    })
+    .filter(Boolean);
 }
 
 export async function runCandidateAppLifecycle({ spec, run, actions, env = process.env }) {
@@ -793,6 +1065,60 @@ function validationCommandEnv(repoId, repoTarget) {
   };
   const src = srcByRepo[repoId];
   return src ? { PYTHONPATH: join(repoTarget, src) } : {};
+}
+
+function implicitCandidateValidationCommands({ actions = [], repos = [] } = {}) {
+  const diff = actionResult(actions, "candidate_ecosystem_diff") || {};
+  const changedFiles = asArray(diff.changed_files);
+  const aaaRepo = repos.find((repo) => repo.id === "across-agents-assistant");
+  if (!aaaRepo?.target) return [];
+  if (!candidateTouchesAaaBackendRuntime(changedFiles)) return [];
+  if (!existsSync(join(aaaRepo.target, "backend", "src", "across_agents_assistant", "api_server.py"))) return [];
+  return [
+    aaaBackendApiImportSmokeCommand(),
+    aaaBackendRuntimeDependencyImportSmokeCommand(changedFiles)
+  ];
+}
+
+function candidateTouchesAaaBackendRuntime(changedFiles) {
+  return asArray(changedFiles).some((file) => {
+    const value = String(file || "");
+    return value === "across-agents-assistant/backend/main.py"
+      || value === "across-agents-assistant/backend/build.py"
+      || value.startsWith("across-agents-assistant/backend/src/across_agents_assistant/");
+  });
+}
+
+function aaaBackendApiImportSmokeCommand() {
+  return {
+    repo: "across-agents-assistant",
+    command: "python3",
+    args: ["-c", AAA_BACKEND_API_IMPORT_CONTRACT_SMOKE],
+    timeout_ms: 60000,
+    implicit: true,
+    summary: "AAA backend API import contract smoke"
+  };
+}
+
+function aaaBackendRuntimeDependencyImportSmokeCommand(changedFiles) {
+  const runtimeFiles = asArray(changedFiles)
+    .map((file) => String(file || ""))
+    .filter((file) => file.startsWith("across-agents-assistant/"))
+    .map((file) => file.slice("across-agents-assistant/".length))
+    .filter((file) => (
+      file === "backend/main.py"
+      || file === "backend/build.py"
+      || file.startsWith("backend/src/across_agents_assistant/")
+    ))
+    .filter((file) => file.endsWith(".py"));
+  return {
+    repo: "across-agents-assistant",
+    command: "python3",
+    args: ["-c", AAA_BACKEND_RUNTIME_DEPENDENCY_IMPORT_CONTRACT_SMOKE, ...runtimeFiles],
+    timeout_ms: 60000,
+    implicit: true,
+    summary: "AAA backend runtime dependency import contract smoke"
+  };
 }
 
 function candidateAppLifecycleRelevantPath(file) {
@@ -1803,6 +2129,64 @@ function isTestPath(path) {
     || rel.endsWith("tests.swift");
 }
 
+function candidateIntegrationQualityFindings(spec, repoId, changedFiles, untrackedFiles) {
+  const strictIntegration = spec?.pack_config?.candidate_quality?.require_existing_product_integration === true
+    || /^aaa-autonomous-self-iteration/.test(String(spec?.id || ""));
+  if (!strictIntegration) return [];
+  const changed = asArray(changedFiles).map(String).filter(Boolean);
+  const untracked = new Set(asArray(untrackedFiles).map(String));
+  const productSources = changed.filter((path) => isProductImplementationPath(path));
+  if (!productSources.length) return [];
+  const changedTests = changed.filter((path) => isTestPath(path));
+  if (!changedTests.length) return [];
+  const existingProductTouch = productSources.some((path) => !untracked.has(path));
+  const existingIntegrationTouch = changed.some((path) => (
+    !untracked.has(path)
+    && isProductIntegrationSurface(repoId, path)
+  ));
+  if (existingProductTouch || existingIntegrationTouch) return [];
+  return [{
+    id: "unintegrated_candidate_helper",
+    severity: "error",
+    path: productSources[0],
+    line: 1,
+    message: "unintegrated_candidate_helper: candidate adds isolated product helper and tests without modifying an existing product entrypoint, registry, workflow, or UI surface",
+    excerpt: changed.slice(0, 6).join(", ")
+  }];
+}
+
+function isProductImplementationPath(path) {
+  const rel = String(path || "");
+  if (!isSourceCodePath(rel) || isTestPath(rel)) return false;
+  return /^(backend\/src\/|src\/|macOS-Client\/Sources\/|tests\/fixtures\/)/.test(rel);
+}
+
+function isProductIntegrationSurface(repoId, path) {
+  const rel = String(path || "");
+  if (repoId === "across-agents-assistant") {
+    return [
+      "backend/src/across_agents_assistant/api_server.py",
+      "backend/src/across_agents_assistant/autopilot_workbench.py",
+      "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
+      "backend/src/across_agents_assistant/loop_engineering_self_iteration.py",
+      "macOS-Client/Sources/",
+      "across.product.json",
+      "README.md"
+    ].some((prefix) => rel === prefix || rel.startsWith(prefix));
+  }
+  if (repoId === "across-autopilot") {
+    return ["src/adapter-registry.js", "src/candidate-ecosystem.js", "src/loop-spec.js", "examples/", "package.json", "README.md"]
+      .some((prefix) => rel === prefix || rel.startsWith(prefix));
+  }
+  if (repoId === "across-orchestrator") {
+    return ["src/across_orchestrator/", "README.md"].some((prefix) => rel === prefix || rel.startsWith(prefix));
+  }
+  if (repoId === "across-context") {
+    return ["src/", "package.json", "README.md"].some((prefix) => rel === prefix || rel.startsWith(prefix));
+  }
+  return false;
+}
+
 function isSourceCodePath(path) {
   const rel = String(path || "").toLowerCase();
   if (!rel) return false;
@@ -2019,9 +2403,12 @@ function normalizeStrategyResponse(response, spec, targetCatalog = null, options
   }
   const admitted = admitGeneratedTarget(selected, spec, {
     catalogTarget,
-    targetId: targetId || catalogTarget?.id || "selected-target"
+    targetId: targetId || catalogTarget?.id || "selected-target",
+    candidateWorkspace: options.candidateWorkspace
   });
-  const candidateTargets = admitBacklogCandidates(response, spec, targetCatalog, admitted.target);
+  const candidateTargets = admitBacklogCandidates(response, spec, targetCatalog, admitted.target, {
+    candidateWorkspace: options.candidateWorkspace
+  });
   return {
     decision: String(response.decision || "implement"),
     summary: String(response.summary || selected.goal || "Research strategy selected a product iteration."),
@@ -2046,7 +2433,7 @@ function normalizeStrategyResponse(response, spec, targetCatalog = null, options
   };
 }
 
-function admitBacklogCandidates(response, spec, targetCatalog, selectedTarget) {
+function admitBacklogCandidates(response, spec, targetCatalog, selectedTarget, options = {}) {
   const raw = asArray(response.candidate_targets || response.dynamic_backlog || response.generated_backlog);
   const source = raw.length ? raw : asArray(targetCatalog);
   const admitted = [];
@@ -2054,7 +2441,8 @@ function admitBacklogCandidates(response, spec, targetCatalog, selectedTarget) {
     try {
       admitted.push(admitGeneratedTarget(item, spec, {
         catalogTarget: null,
-        targetId: item?.target_id || item?.id || `candidate-${index + 1}`
+        targetId: item?.target_id || item?.id || `candidate-${index + 1}`,
+        candidateWorkspace: options.candidateWorkspace
       }).target);
     } catch {
       continue;
@@ -2070,7 +2458,7 @@ function admitBacklogCandidates(response, spec, targetCatalog, selectedTarget) {
   }));
 }
 
-function admitGeneratedTarget(selected, spec, { catalogTarget = null, targetId = "selected-target" } = {}) {
+function admitGeneratedTarget(selected, spec, { catalogTarget = null, targetId = "selected-target", candidateWorkspace = null } = {}) {
   const failures = [];
   const warnings = [];
   const targetRepo = String(selected.target_repo || catalogTarget?.target_repo || spec.pack_config?.target_repo || "across-agents-assistant");
@@ -2097,8 +2485,8 @@ function admitGeneratedTarget(selected, spec, { catalogTarget = null, targetId =
     }
   }
   const validationCommands = normalizeGeneratedValidationCommands(
-    selected.validation_commands || catalogTarget?.validation_commands,
-    { targetRepo, allowedPaths }
+    catalogTarget ? catalogTarget.validation_commands : selected.validation_commands,
+    { targetRepo, allowedPaths, candidateWorkspace }
   );
   if (validationCommands.length < 2) {
     warnings.push("generated target has fewer than two validation commands");
@@ -2139,7 +2527,7 @@ function admitGeneratedTarget(selected, spec, { catalogTarget = null, targetId =
   };
 }
 
-function normalizeGeneratedValidationCommands(commands, { targetRepo, allowedPaths }) {
+function normalizeGeneratedValidationCommands(commands, { targetRepo, allowedPaths, candidateWorkspace = null }) {
   const requested = asArray(commands)
     .filter((item) => item && typeof item === "object" && item.command)
     .slice(0, 8)
@@ -2150,23 +2538,34 @@ function normalizeGeneratedValidationCommands(commands, { targetRepo, allowedPat
       ...(item.timeout_ms !== undefined ? { timeout_ms: Number(item.timeout_ms || 0) } : {})
     }));
   const normalized = requested.filter((command) => validationCommandIsAdmissible(command));
-  const fallback = generatedValidationCommands({ targetRepo, allowedPaths });
+  const fallback = generatedValidationCommands({ targetRepo, allowedPaths, candidateWorkspace });
   const combined = dedupeValidationCommands([...normalized, ...fallback]);
   if (combined.length) return combined.slice(0, 8);
   return fallback.slice(0, 8);
 }
 
-function generatedValidationCommands({ targetRepo, allowedPaths }) {
+function generatedValidationCommands({ targetRepo, allowedPaths, candidateWorkspace = null }) {
   const pythonFiles = allowedPaths.filter((path) => path.endsWith(".py"));
   const testFiles = pythonFiles.filter((path) => path.startsWith("backend/tests/") || path.includes("/tests/"));
   const generated = [{ repo: targetRepo, command: "git", args: ["diff", "--check"], timeout_ms: 30000 }];
   if (pythonFiles.length) {
     generated.push({ repo: targetRepo, command: "python3", args: ["-m", "py_compile", ...pythonFiles], timeout_ms: 30000 });
   }
+  if (candidateHasAaaBackendApi(candidateWorkspace)
+    && targetRepo === "across-agents-assistant" && pythonFiles.some((path) => (
+    path === "backend/main.py"
+    || path.startsWith("backend/src/across_agents_assistant/")
+  ))) {
+    generated.push(aaaBackendApiImportSmokeCommand());
+  }
   if (allowedPaths.some((path) => path.endsWith(".swift") || path.startsWith("macOS-Client/"))) {
     generated.push({ repo: targetRepo, command: "swift", args: ["test", "--package-path", "macOS-Client"], timeout_ms: 180000 });
   }
+  const platformSelfRepairReplayOnly = targetRepo === "across-autopilot"
+    && allowedPaths.length === 1
+    && allowedPaths[0] === "tests/platform-self-repair.test.js";
   if (["across-autopilot", "across-context"].includes(targetRepo)
+    && !platformSelfRepairReplayOnly
     && allowedPaths.some((path) => path.startsWith("src/") || path.startsWith("tests/") || path.startsWith("examples/") || path === "package.json")) {
     generated.push({ repo: targetRepo, command: "npm", args: ["test", "--", "--runInBand"], timeout_ms: 180000 });
   }
@@ -2182,6 +2581,11 @@ function generatedValidationCommands({ targetRepo, allowedPaths }) {
     });
   }
   return generated.slice(0, 8);
+}
+
+function candidateHasAaaBackendApi(candidateWorkspace) {
+  return Boolean(candidateWorkspace)
+    && existsSync(join(candidateWorkspace, "backend", "src", "across_agents_assistant", "api_server.py"));
 }
 
 function validationCommandIsAdmissible(command) {
@@ -2223,7 +2627,7 @@ function openTargetPathPolicy() {
   return {
     denied: DEFAULT_DENIED_PATHS,
     product_prefixes: {
-      "across-agents-assistant": ["backend/src/", "backend/tests/", "macOS-Client/Sources/", "macOS-Client/Tests/", "scripts/", "docs/", "README.md", "CHANGELOG.md"],
+      "across-agents-assistant": ["backend/main.py", "backend/src/", "backend/tests/", "macOS-Client/Sources/", "macOS-Client/Tests/", "build_app.sh", "scripts/", "docs/", "README.md", "CHANGELOG.md"],
       "across-autopilot": ["src/", "tests/", "examples/", "README.md", "AUTOPILOT_RFC.md", "package.json"],
       "across-orchestrator": ["src/across_orchestrator/", "tests/", "README.md"],
       "across-context": ["src/", "tests/", "README.md", "package.json"]
@@ -2240,75 +2644,106 @@ async function cloneRepo(repo, target) {
   const args = ["clone"];
   if (repo.ref || repo.branch) args.push("--branch", String(repo.ref || repo.branch));
   args.push(String(repo.source), target);
-  await exec("git", args, { timeout: Number(repo.timeout_ms || 120_000), maxBuffer: 10 * 1024 * 1024 });
+  await gitExec("/", args, { timeout: Number(repo.timeout_ms || 120_000), maxBuffer: 10 * 1024 * 1024 });
 }
 
 async function copyRepoSnapshot(repo, target) {
   const source = resolvePath(repo.source, process.cwd());
   if (!existsSync(source)) throw ecosystemFailure("candidate_ecosystem_acquire", `Source repo does not exist: ${source}`);
   await mkdir(dirname(target), { recursive: true });
-  if (existsSync(join(source, ".git"))) {
-    await copyGitSnapshot(source, target);
+  await copyFilesystemSnapshot(repo.id, source, target);
+}
+
+async function copyFilesystemSnapshot(repoId, source, target) {
+  await mkdir(target, { recursive: true });
+  for (const rel of snapshotRootsForRepo(repoId)) {
+    const src = join(source, rel);
+    if (!existsSync(src)) continue;
+    const dst = join(target, rel);
+    await mkdir(dirname(dst), { recursive: true });
+    if (useSystemSnapshotCopy()) {
+      await copyWithSystemTool(src, dst);
+    } else {
+      await cp(src, dst, {
+        recursive: true,
+        filter: (path) => {
+          const name = basename(path);
+          if (DEFAULT_EXCLUDES.includes(name)) return false;
+          if (path.includes(`${resolve(source)}/.git/`)) return false;
+          return true;
+        }
+      });
+    }
+  }
+}
+
+function useSystemSnapshotCopy() {
+  return process.env.ACROSS_AUTOPILOT_PRODUCT_MODE === "1" && existsSync("/usr/bin/rsync");
+}
+
+async function copyWithSystemTool(src, dst) {
+  const info = await stat(src);
+  if (info.isDirectory()) {
+    await mkdir(dst, { recursive: true });
+    const args = [
+      "-a",
+      ...DEFAULT_EXCLUDES.flatMap((name) => ["--exclude", name]),
+      `${src}/`,
+      `${dst}/`
+    ];
+    await spawnCommand("/usr/bin/rsync", args, {
+      timeout: 60_000,
+      maxBuffer: 10 * 1024 * 1024,
+      env: snapshotCopyEnv()
+    });
     return;
   }
-  await cp(source, target, {
-    recursive: true,
-    filter: (src) => {
-      const name = basename(src);
-      if (DEFAULT_EXCLUDES.includes(name)) return false;
-      if (src.includes(`${resolve(source)}/.git/`)) return false;
-      return true;
-    }
-  });
-}
-
-async function copyGitSnapshot(source, target) {
-  await mkdir(target, { recursive: true });
-  const { stdout } = await exec("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
-    cwd: source,
-    timeout: 60_000,
-    maxBuffer: 20 * 1024 * 1024
-  });
-  const files = String(stdout || "").split("\0").filter(Boolean);
-  for (const rel of files) {
-    const safeRel = safeRelativePath(rel);
-    if (shouldExcludeSnapshotPath(safeRel)) continue;
-    const src = ensureInside(source, resolve(source, safeRel));
-    const dst = ensureInside(target, resolve(target, safeRel));
-    let info;
-    try {
-      info = await stat(src);
-    } catch (error) {
-      if (error.code === "ENOENT") continue;
-      throw error;
-    }
-    if (!info.isFile()) continue;
-    await mkdir(dirname(dst), { recursive: true });
-    await copyFile(src, dst);
+  if (info.isFile()) {
+    await writeFile(dst, await readFile(src));
+    await chmod(dst, info.mode & 0o777);
   }
 }
 
-function shouldExcludeSnapshotPath(rel) {
-  const parts = rel.split("/");
-  return parts.some((part) => DEFAULT_EXCLUDES.includes(part));
+function snapshotCopyEnv(env = process.env) {
+  const result = {
+    PATH: env.PATH || "/usr/bin:/bin",
+    HOME: env.HOME || "",
+    TMPDIR: env.TMPDIR || "/tmp"
+  };
+  for (const key of ["LANG", "LC_ALL", "LC_CTYPE"]) {
+    if (env[key]) result[key] = env[key];
+  }
+  return result;
+}
+
+function gitSnapshotEnv(env = process.env) {
+  const result = {};
+  for (const key of ["PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "NO_COLOR", "GIT_PAGER", "PAGER"]) {
+    if (env[key]) result[key] = env[key];
+  }
+  result.GIT_TERMINAL_PROMPT = "0";
+  result.GIT_CONFIG_GLOBAL = "/dev/null";
+  result.GIT_CONFIG_NOSYSTEM = "1";
+  result.GIT_OPTIONAL_LOCKS = "0";
+  return result;
 }
 
 async function ensureGitBaseline(root, repoId, mode) {
   const gitDir = join(root, ".git");
   if (!existsSync(gitDir)) {
-    await exec("git", ["init"], { cwd: root, timeout: 60_000 });
+    await gitExec(root, ["init"], { timeout: 60_000 });
   }
-  await exec("git", ["add", "."], { cwd: root, timeout: 60_000, maxBuffer: 10 * 1024 * 1024 });
+  await gitExec(root, ["add", "."], { timeout: 60_000, maxBuffer: 10 * 1024 * 1024 });
   const hasHead = await gitMaybe(root, ["rev-parse", "--verify", "HEAD"]);
   const status = await gitMaybe(root, ["status", "--short", "--untracked-files=all"]);
   if (!hasHead.trim() || status.trim()) {
-    await exec("git", [
+    await gitExec(root, [
       "-c", "user.name=Across Autopilot",
       "-c", "user.email=autopilot@example.invalid",
       "commit",
       "-m",
       `${mode} baseline for ${repoId}`
-    ], { cwd: root, timeout: 60_000, maxBuffer: 10 * 1024 * 1024 });
+    ], { timeout: 60_000, maxBuffer: 10 * 1024 * 1024 });
   }
 }
 
@@ -2317,10 +2752,11 @@ async function inspectSourceRepo(repo) {
   if (!existsSync(source) || !existsSync(join(source, ".git"))) {
     return { git: false, head: "", status: "" };
   }
+  const status = await sourceStatusSnapshot(repo.id, source);
   return {
     git: true,
-    head: await gitMaybe(source, ["rev-parse", "HEAD"]),
-    status: await gitMaybe(source, ["status", "--short", "--untracked-files=all"])
+    head: sourceFilesystemPin(status),
+    status
   };
 }
 
@@ -2338,8 +2774,8 @@ async function verifySourceUnchanged(repos) {
       results.push({ id: repo.id, source, unchanged: true, mode: "source_baseline_unavailable" });
       continue;
     }
-    const head = await gitMaybe(source, ["rev-parse", "HEAD"]);
-    const status = await gitMaybe(source, ["status", "--short", "--untracked-files=all"]);
+    const status = await sourceStatusSnapshot(repo.id, source);
+    const head = sourceFilesystemPin(status);
     const unchanged = head.trim() === expectedHead && status.trim() === expectedStatus;
     results.push({
       id: repo.id,
@@ -2445,11 +2881,25 @@ function defaultRepoSource(id, env) {
   const envKey = `ACROSS_${id.replace(/^across-/, "").replaceAll("-", "_").toUpperCase()}_SOURCE`;
   if (env[envKey]) return env[envKey];
   const projectRoot = resolve(ecosystemHome(env), "..", "Documents", "projects");
+  const mirror = resolve(ecosystemHome(env), "source-mirrors", id);
+  const installedPlugin = resolve(pluginRoot(env), id);
   const cwdSibling = resolve(process.cwd(), "..", id);
-  if (existsSync(cwdSibling)) return cwdSibling;
-  const homeProjects = resolve(process.env.HOME || "", "Documents", "projects", id);
+  const homeProjects = resolve(env.HOME || process.env.HOME || "", "Documents", "projects", id);
+  if (isProductMode(env)) {
+    if (existsSync(mirror)) return mirror;
+    if (id !== "across-agents-assistant" && existsSync(installedPlugin)) return installedPlugin;
+    return mirror;
+  }
+  if (existsSync(cwdSibling) && existsSync(join(cwdSibling, ".git"))) return cwdSibling;
   if (existsSync(homeProjects)) return homeProjects;
+  if (existsSync(cwdSibling)) return cwdSibling;
+  if (existsSync(mirror)) return mirror;
+  if (id !== "across-agents-assistant" && existsSync(installedPlugin)) return installedPlugin;
   return projectRoot;
+}
+
+function isProductMode(env) {
+  return env.ACROSS_AUTOPILOT_PRODUCT_MODE === "1" || env.ACROSS_AGENTS_PRODUCT_MODE === "1";
 }
 
 function candidateRuntimeRoot(env) {
@@ -2508,13 +2958,200 @@ async function readOptional(path) {
   }
 }
 
+function snapshotRootsForRepo(repoId) {
+  return SNAPSHOT_ROOTS_BY_REPO[repoId] || [
+    "README.md",
+    "src",
+    "tests",
+    "docs",
+    "package.json",
+    "pyproject.toml",
+    ".gitignore"
+  ];
+}
+
+async function sourceStatusSnapshot(repoId, source) {
+  const inventory = [];
+  await collectSourceInventoryForRoots(repoId, source, inventory);
+  return `fs:${hashText(stableJson(inventory))}\nfiles:${inventory.length}`;
+}
+
+function sourceFilesystemPin(status) {
+  return String(status || "").split("\n", 1)[0] || "";
+}
+
+async function collectSourceInventoryForRoots(repoId, source, inventory) {
+  for (const rel of snapshotRootsForRepo(repoId)) {
+    const path = join(source, rel);
+    if (!existsSync(path)) {
+      inventory.push([rel, "missing", 0]);
+      continue;
+    }
+    const info = await stat(path);
+    inventory.push([
+      rel,
+      info.isDirectory() ? "dir" : "file",
+      info.size,
+      Math.trunc(info.mtimeMs)
+    ]);
+  }
+}
+
+function hashText(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 async function gitMaybe(cwd, args) {
   try {
-    const { stdout } = await exec("git", args, { cwd, timeout: 60_000, maxBuffer: 5 * 1024 * 1024 });
+    const { stdout } = await gitExec(cwd, args, { timeout: 60_000, maxBuffer: 5 * 1024 * 1024 });
     return String(stdout || "").trim();
   } catch {
     return "";
   }
+}
+
+function gitExec(cwd, args, options = {}) {
+  return spawnGit("/", ["-C", cwd, ...args], {
+    timeout: options.timeout || 60_000,
+    maxBuffer: options.maxBuffer || 5 * 1024 * 1024
+  });
+}
+
+function spawnCommand(command, args, options = {}) {
+  const timeoutMs = Number(options.timeout || 60_000);
+  const maxBuffer = Number(options.maxBuffer || 5 * 1024 * 1024);
+  return new Promise((resolvePromise, rejectPromise) => {
+    const stdout = [];
+    const stderr = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let timedOut = false;
+    let settled = false;
+    const child = spawn(command, args, {
+      cwd: options.cwd || "/",
+      env: options.env || process.env,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const finish = (error, result = null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) {
+        rejectPromise(error);
+      } else {
+        resolvePromise(result);
+      }
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      setTimeout(() => {
+        if (!settled) child.kill("SIGKILL");
+      }, 2_000).unref();
+    }, timeoutMs);
+    child.stdout.on("data", (chunk) => {
+      stdoutBytes += chunk.length;
+      if (stdoutBytes <= maxBuffer) stdout.push(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderrBytes += chunk.length;
+      if (stderrBytes <= maxBuffer) stderr.push(chunk);
+    });
+    child.on("error", (error) => finish(error));
+    child.on("close", (code, signal) => {
+      const stdoutText = Buffer.concat(stdout).toString("utf8");
+      const stderrText = Buffer.concat(stderr).toString("utf8");
+      if (timedOut) {
+        const error = new Error(`${command} timed out after ${timeoutMs}ms`);
+        error.code = "ETIMEDOUT";
+        error.stdout = stdoutText;
+        error.stderr = stderrText;
+        finish(error);
+        return;
+      }
+      if (code !== 0) {
+        const error = new Error(`${command} exited with ${code ?? signal}`);
+        error.code = code;
+        error.signal = signal;
+        error.stdout = stdoutText;
+        error.stderr = stderrText;
+        finish(error);
+        return;
+      }
+      finish(null, { stdout: stdoutText, stderr: stderrText });
+    });
+  });
+}
+
+function spawnGit(cwd, args, options = {}) {
+  const timeoutMs = Number(options.timeout || 60_000);
+  const maxBuffer = Number(options.maxBuffer || 5 * 1024 * 1024);
+  return new Promise((resolvePromise, rejectPromise) => {
+    const stdout = [];
+    const stderr = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let timedOut = false;
+    let settled = false;
+    const child = spawn("git", args, {
+      cwd,
+      env: gitSnapshotEnv(),
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const finish = (error, result = null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) {
+        error.stdout = Buffer.concat(stdout, stdoutBytes).toString("utf8");
+        error.stderr = Buffer.concat(stderr, stderrBytes).toString("utf8");
+        rejectPromise(error);
+        return;
+      }
+      resolvePromise(result);
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      setTimeout(() => {
+        if (!settled) child.kill("SIGKILL");
+      }, 2_000).unref?.();
+    }, timeoutMs);
+    child.stdout.on("data", (chunk) => {
+      stdoutBytes += chunk.length;
+      if (stdoutBytes > maxBuffer) {
+        const error = new Error(`git stdout exceeded maxBuffer ${maxBuffer}`);
+        error.code = "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+        child.kill("SIGTERM");
+        finish(error);
+        return;
+      }
+      stdout.push(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderrBytes += chunk.length;
+      if (stderrBytes <= maxBuffer) stderr.push(chunk);
+    });
+    child.on("error", (error) => {
+      finish(error);
+    });
+    child.on("close", (code, signal) => {
+      if (settled) return;
+      if (code === 0) {
+        finish(null, {
+          stdout: Buffer.concat(stdout, stdoutBytes),
+          stderr: Buffer.concat(stderr, stderrBytes)
+        });
+        return;
+      }
+      const error = new Error(timedOut
+        ? `git ${args.join(" ")} timed out after ${timeoutMs}ms`
+        : `git ${args.join(" ")} exited with code ${code ?? "null"}`);
+      error.code = code;
+      error.signal = signal;
+      finish(error);
+    });
+  });
 }
 
 function assertAllowed(rel, allowedPaths) {

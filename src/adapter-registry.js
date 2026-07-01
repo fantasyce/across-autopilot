@@ -21,6 +21,7 @@ import { listToolPacks } from "./tool-packs.js";
 import { roleForAdapter } from "./roles.js";
 import { discoverExternalSkills } from "./skill-radar.js";
 import { renderWorkflowPackHostExports, workflowPackForLoopSpec } from "./workflow-packs.js";
+import { renderTriggerPayloadSource } from "./platform-self-repair.js";
 
 const exec = promisify(execFile);
 
@@ -83,6 +84,7 @@ export class AdapterRegistry {
       "runtime.promotion_attestation",
       "runtime.role_orchestration",
       "runtime.runtime_policy",
+      "runtime.platform_self_repair",
       "runtime.workflow_pack_registry",
       "runtime.tool_pack_registry",
       "runtime.trigger_queue"
@@ -103,7 +105,7 @@ export class AdapterRegistry {
 }
 
 export function registerBuiltIns(registry) {
-  for (const id of ["file", "directory", "url", "rss", "github_repo", "github_search", "package_registry", "manual_input", "external_skills_radar"]) {
+  for (const id of ["file", "directory", "url", "rss", "github_repo", "github_search", "package_registry", "manual_input", "trigger_payload", "external_skills_radar"]) {
     registry.registerSource(sourceAdapter(id));
   }
   for (const id of ["read_only_analysis", "source_digest", "workflow_pack_export", "compatibility_scoring", "license_check", "manifest_inspection", "dependency_risk_check", "candidate_ecosystem_acquire", "product_iteration_strategy", "host_code_iteration", "candidate_ecosystem_diff", "candidate_ecosystem_validation", "candidate_app_lifecycle", "candidate_self_hosting_probe", "semantic_alignment_review", "candidate_workspace_patch", "candidate_diff_summary", "candidate_validation", "promotion_report_generation", "report_generation", "orchestrator_task_dispatch", "quality_gate_evaluation", "memory_write_candidate"]) {
@@ -139,6 +141,9 @@ async function runSource(id, source, spec, run) {
   if (id === "manual_input") {
     return { kind: "manual_input", title: source.title || source.id || "Manual input", content: source.content || "" };
   }
+  if (id === "trigger_payload") {
+    return renderTriggerPayloadSource(run?.trigger_event?.payload || {});
+  }
   if (id === "external_skills_radar") {
     return discoverExternalSkills({ roots: source.roots || source.root });
   }
@@ -158,16 +163,16 @@ async function runSource(id, source, spec, run) {
       return { kind: id, root, files: await directoryRecords(root, Number(source.max_files || 120)) };
     }
     if (id === "github_repo" && source.url) return cloneGitRepository(source, run);
-    if (source.url) return fetchUrlRecord(source.url, { kind: id });
+    if (source.url) return fetchUrlRecord(source.url, { kind: id, timeoutMs: sourceTimeoutMs(source) });
   }
   if (id === "github_search") {
     const fixtures = asArray(source.repositories || source.fixtures);
     if (fixtures.length) return { kind: "github_search", query: source.query || "", repositories: fixtures.map(normalizeFixtureSource) };
-    return fetchUrlRecord(source.url || `https://api.github.com/search/repositories?q=${encodeURIComponent(source.query || "topic:mcp")}`, { kind: id });
+    return fetchUrlRecord(source.url || `https://api.github.com/search/repositories?q=${encodeURIComponent(source.query || "topic:mcp")}`, { kind: id, timeoutMs: sourceTimeoutMs(source) });
   }
   if (id === "rss" || id === "url") {
     if (source.path) return textRecord(resolvePath(source.path, process.cwd()), await readFile(resolvePath(source.path, process.cwd()), "utf8"));
-    return fetchUrlRecord(source.url, { kind: id });
+    return fetchUrlRecord(source.url, { kind: id, timeoutMs: sourceTimeoutMs(source) });
   }
   return { kind: id, source };
 }
@@ -256,11 +261,37 @@ function readOnlyAnalysis({ sources, spec }) {
 }
 
 function sourceDigest({ sources, recalledMemory }) {
-  const titles = sources.map((source) => source.result?.title || source.result?.name || source.id);
+  const digest = sources.map((source) => {
+    const title = source.result?.title || source.result?.name || source.title || source.id;
+    if (source.status === "failed") {
+      return {
+        title,
+        status: "unavailable",
+        summary: `Source unavailable: ${title}`,
+        failure_code: source.failure?.code || null,
+        retryable: source.failure?.retryable ?? null
+      };
+    }
+    return {
+      title,
+      status: "reviewed",
+      summary: `Source reviewed: ${title}`
+    };
+  });
+  const failedSources = sources.filter((source) => source.status === "failed");
   return {
-    digest: titles.map((title) => ({ title, summary: `Source reviewed: ${title}` })),
+    status: failedSources.length ? "attention" : "passed",
+    digest,
+    unavailable_sources: failedSources.map((source) => ({
+      id: source.id,
+      title: source.title || source.result?.title || source.id,
+      url: source.url || source.result?.url || null,
+      failure_code: source.failure?.code || null,
+      retryable: source.failure?.retryable ?? null
+    })),
     recalled_memory_count: recalledMemory.length,
-    source_count: sources.length
+    source_count: sources.length,
+    reviewed_source_count: sources.length - failedSources.length
   };
 }
 
@@ -1051,12 +1082,37 @@ function shouldReadSourceExcerpt(rel) {
 
 async function fetchUrlRecord(url, extra = {}) {
   if (!url) throw new LoopFailure({ code: FAILURE_CODES.SOURCE_UNREACHABLE, failedState: "discovering_sources", message: "Source URL is missing." });
-  const response = await fetch(url, { headers: { "User-Agent": "AcrossAutopilot/1.0" } });
+  const timeoutMs = Number(extra.timeoutMs || extra.timeout_ms || 15_000);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
+  let response;
+  try {
+    response = await fetch(url, {
+      headers: { "User-Agent": "AcrossAutopilot/1.0" },
+      signal: controller.signal
+    });
+  } catch (error) {
+    const timedOut = controller.signal.aborted;
+    throw new LoopFailure({
+      code: FAILURE_CODES.SOURCE_UNREACHABLE,
+      failedState: "discovering_sources",
+      message: timedOut ? `Source request timed out after ${timeoutMs}ms.` : `Source request failed: ${String(error?.message || error).slice(0, 200)}.`,
+      retryable: true
+    });
+  } finally {
+    clearTimeout(timer);
+  }
   if (!response.ok) {
     throw new LoopFailure({ code: response.status === 429 ? FAILURE_CODES.SOURCE_RATE_LIMITED : FAILURE_CODES.SOURCE_UNREACHABLE, failedState: "discovering_sources", message: `Source request failed with ${response.status}.` });
   }
   const text = await response.text();
   return { ...extra, url, status_code: response.status, sha256: sha256(text), title: basename(url), excerpt: text.slice(0, 500) };
+}
+
+function sourceTimeoutMs(source) {
+  const value = Number(source?.timeout_ms ?? source?.timeoutMs ?? 15_000);
+  if (!Number.isFinite(value) || value <= 0) return 15_000;
+  return Math.max(100, Math.min(value, 60_000));
 }
 
 function textRecord(path, text) {
