@@ -180,22 +180,35 @@ function classifyObservedSignals(observed) {
   if (/(sandbox\.violation|approval\.required|merge_pr|release_publish|write_secret|sign_artifact)/.test(text)) {
     return "security_policy_stop";
   }
+  if (candidateValidationStoppedBadCandidate(observed)) {
+    return "candidate_code_failure";
+  }
+  if (/(candidate_ecosystem_validation)/.test(text)
+    && /(internal operation failed|python_version_incompatible|candidate_test_assertion|candidate_exception|candidate_import_failure)/.test(text)
+    && !platformValidationGapSignal(text)) {
+    return "candidate_code_failure";
+  }
   if (/(candidate_ecosystem_validation)/.test(text)
     && /(traceback|filenotfounderror|syntaxerror|assertionerror|typeerror|valueerror|pytest|test failed|py_compile|lint failed)/.test(text)
-    && !/(candidate_quality|unintegrated_candidate_helper|validation gap|undeclared runtime dependency|aaa backend api import contract)/.test(text)) {
+    && !platformValidationGapSignal(text)) {
     return "candidate_code_failure";
   }
   if (/(syntaxerror|assertionerror|pytest|test failed|py_compile|lint failed)/.test(text)
-    && !/(candidate_quality|unintegrated_candidate_helper|validation gap|undeclared runtime dependency|aaa backend api import contract)/.test(text)) {
+    && !platformValidationGapSignal(text)) {
     return "candidate_code_failure";
   }
   if (/(autopilot-review-decision|missing_subcommand|packaged backend|candidate app lifecycle|build_app|module executable|subcommand)/.test(text)) {
     return "packaging_gap";
   }
-  if (/(modulenotfounderror|importerror|nameerror|runtime preflight|backend runtime|missing internal api import)/.test(text)) {
+  if (/(candidate_ecosystem_validation)/.test(text)
+    && /(modulenotfounderror|importerror|nameerror|missing internal api import|undeclared runtime dependency|aaa backend api import contract)/.test(text)
+    && !platformValidationGapSignal(text)) {
+    return "candidate_code_failure";
+  }
+  if (/(runtime preflight|backend runtime)/.test(text)) {
     return "runtime_gap";
   }
-  if (/(candidate_quality|unintegrated_candidate_helper|undeclared runtime dependency|aaa backend api import contract|validation gap|validator|validation finding)/.test(text)) {
+  if (platformValidationGapSignal(text)) {
     return "validation_gap";
   }
   if (/(host_validation_repair_fallback|selected path is outside target catalog|generated target|allowed_patch_paths|research decision|fallback)/.test(text)) {
@@ -208,6 +221,18 @@ function classifyObservedSignals(observed) {
     return "model_output_failure";
   }
   return "unknown";
+}
+
+function candidateValidationStoppedBadCandidate(observed) {
+  return observed.some((item) => (
+    item.kind === "validation_command"
+    && item.adapter_id === "candidate_ecosystem_validation"
+    && /(candidate_quality|unintegrated_candidate_helper|destructive_product_entrypoint_rewrite|excessive_blank_lines|placeholder_implementation|unsafe_shell_execution|hardcoded_secret_literal|pytest_dependency_in_candidate_test|undeclared runtime dependency|aaa backend api import contract)/i.test(String(item.text || ""))
+  ));
+}
+
+function platformValidationGapSignal(text) {
+  return /(validation gap|validator|validation finding|not blocking|not promoted into a blocking command|failed to block|missing deterministic validation)/.test(text);
 }
 
 function collectFailureSignals({ failedRun = {}, evidence = {}, triggerPayload = {} } = {}) {
@@ -235,7 +260,11 @@ function collectFailureSignals({ failedRun = {}, evidence = {}, triggerPayload =
       push("validation_command", {
         adapter: action.adapter,
         code: action.failure?.code,
-        summary: command.summary,
+        summary: [
+          command.summary,
+          command.diagnostic?.failure_kind,
+          command.diagnostic?.failure_summary
+        ].filter(Boolean).join(": "),
         stdout: command.stdout,
         stderr: command.stderr || [command.command, ...asArray(command.args)].join(" ")
       });
