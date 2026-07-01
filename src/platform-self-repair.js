@@ -180,6 +180,11 @@ function classifyObservedSignals(observed) {
   if (/(sandbox\.violation|approval\.required|merge_pr|release_publish|write_secret|sign_artifact)/.test(text)) {
     return "security_policy_stop";
   }
+  if (/(candidate_ecosystem_validation)/.test(text)
+    && /(traceback|filenotfounderror|syntaxerror|assertionerror|typeerror|valueerror|pytest|test failed|py_compile|lint failed)/.test(text)
+    && !/(candidate_quality|unintegrated_candidate_helper|validation gap|undeclared runtime dependency|aaa backend api import contract)/.test(text)) {
+    return "candidate_code_failure";
+  }
   if (/(syntaxerror|assertionerror|pytest|test failed|py_compile|lint failed)/.test(text)
     && !/(candidate_quality|unintegrated_candidate_helper|validation gap|undeclared runtime dependency|aaa backend api import contract)/.test(text)) {
     return "candidate_code_failure";

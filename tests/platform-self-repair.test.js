@@ -127,3 +127,53 @@ test("ordinary candidate failures do not enqueue platform self-repair", () => {
   assert.equal(diagnosis.category, "candidate_code_failure");
   assert.equal(diagnosis.status, "not_applicable");
 });
+
+test("candidate validation tracebacks are not upgraded by later app lifecycle failures", () => {
+  const diagnosis = diagnosePlatformSelfRepair({
+    spec: {
+      id: "aaa-autonomous-self-iteration",
+      failure_policy: { platform_self_repair: { enabled: true } }
+    },
+    failedRun: {
+      run_id: "run-bad-candidate-test",
+      spec_id: "aaa-autonomous-self-iteration",
+      trigger_event: { payload: { auto_platform_self_repair: true } },
+      failure: {
+        code: 1,
+        adapter_id: "candidate_app_lifecycle",
+        message: "Candidate app lifecycle command failed: PyInstaller output was truncated"
+      }
+    },
+    evidence: {
+      actions: [
+        {
+          adapter: "candidate_ecosystem_validation",
+          status: "attention",
+          result: {
+            commands: [
+              {
+                status: "failed",
+                command: "python3",
+                args: ["-c", "run generated candidate tests"],
+                stderr: "Traceback (most recent call last): FileNotFoundError: candidate/plugin.json"
+              }
+            ]
+          }
+        },
+        {
+          adapter: "candidate_app_lifecycle",
+          status: "failed",
+          failure: {
+            code: 1,
+            message: "Candidate app lifecycle command failed: PyInstaller output was truncated"
+          }
+        }
+      ],
+      gates: [{ id: "candidate_app_lifecycle_passed", status: "failed" }]
+    }
+  });
+
+  assert.equal(diagnosis.eligible, false);
+  assert.equal(diagnosis.category, "candidate_code_failure");
+  assert.equal(diagnosis.target_id, null);
+});

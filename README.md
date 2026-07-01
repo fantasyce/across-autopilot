@@ -71,9 +71,13 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.10`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.10` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.11`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.11` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.11` tightens platform self-repair routing so ordinary candidate validation
+tracebacks are not misclassified as host packaging gaps just because a later
+candidate app lifecycle check also failed.
 
 `v0.2.10` keeps runtime version reporting aligned with the package version so
 MCP server info and the default stable slot cannot drift behind the managed
