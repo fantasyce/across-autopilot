@@ -7,6 +7,7 @@ import { buildEvidenceEnvelope, gateFromFailure, runtimeBudgetUsage } from "./ev
 import { FAILURE_CODES, LoopFailure, failureFromError } from "./failures.js";
 import { loadLoopSpec, migrateLoopSpec, normalizeRuntimePolicy, validateLoopSpec } from "./loop-spec.js";
 import { OrchestratorClient } from "./orchestrator-client.js";
+import { buildPlatformSelfRepairTrigger, diagnosePlatformSelfRepair, PLATFORM_SELF_REPAIR_SPEC_ID } from "./platform-self-repair.js";
 import { RunStore } from "./run-store.js";
 import { buildTelemetry } from "./telemetry.js";
 import { TriggerQueue } from "./trigger-queue.js";
@@ -294,12 +295,22 @@ export class AutopilotSupervisor {
       };
     }
     try {
-      const result = await this.run(item.spec_snapshot || item.spec_source || item.spec_id, { trigger: item.trigger_event });
+      const activeSpec = item.spec_snapshot || item.spec_source || item.spec_id;
+      const result = await this.run(activeSpec, { trigger: item.trigger_event });
       const triggerStatus = result.run.status === "completed" ? "completed" : "failed";
+      const platformSelfRepair = triggerStatus === "failed"
+        ? await this.maybeEnqueuePlatformSelfRepair({
+          spec: typeof activeSpec === "object" ? activeSpec : result.evidence?.spec || item.spec_snapshot,
+          failedRun: result.run,
+          evidence: result.evidence,
+          triggerItem: item
+        })
+        : null;
       const completedTrigger = await this.triggerQueue.complete(item.trigger_id, {
         status: triggerStatus,
         run_id: result.run.run_id,
-        failure: triggerStatus === "failed" ? result.run.failure || result.evidence.failure || null : null
+        failure: triggerStatus === "failed" ? result.run.failure || result.evidence.failure || null : null,
+        platform_self_repair: platformSelfRepair
       });
       return {
         schema_version: "across-autopilot-trigger-dispatch/1.0",
@@ -309,13 +320,40 @@ export class AutopilotSupervisor {
         evidence: result.evidence
       };
     } catch (error) {
+      const failure = failureFromError(error, "trigger_dispatch");
+      const platformSelfRepair = await this.maybeEnqueuePlatformSelfRepair({
+        spec: item.spec_snapshot,
+        failedRun: { run_id: null, spec_id: item.spec_id, status: "failed", failure, trigger_event: item.trigger_event },
+        evidence: { run_id: null, spec_id: item.spec_id, status: "failed", failure, actions: [], gates: [] },
+        triggerItem: item
+      });
       const completedTrigger = await this.triggerQueue.complete(item.trigger_id, {
         status: "failed",
-        failure: failureFromError(error, "trigger_dispatch")
+        failure,
+        platform_self_repair: platformSelfRepair
       });
       error.trigger = completedTrigger;
       throw error;
     }
+  }
+
+  async maybeEnqueuePlatformSelfRepair({ spec = {}, failedRun = {}, evidence = {}, triggerItem = null } = {}) {
+    const diagnosis = diagnosePlatformSelfRepair({ spec, failedRun, evidence, triggerItem });
+    if (!diagnosis.eligible) return diagnosis;
+    const repairSpec = await this.loadSpec(PLATFORM_SELF_REPAIR_SPEC_ID);
+    const trigger = buildPlatformSelfRepairTrigger(diagnosis);
+    const queued = await this.triggerQueue.enqueue(repairSpec, trigger);
+    if (failedRun?.run_id) {
+      await this.store.updateRun(failedRun.run_id, { platform_self_repair: { diagnosis, trigger: queued } });
+      await this.store.audit(
+        failedRun.run_id,
+        failedRun.spec_id || spec?.id || "unknown",
+        "platform_self_repair_queued",
+        "Platform self-repair trigger queued.",
+        { diagnosis, trigger_id: queued.trigger_id, duplicate: Boolean(queued.duplicate) }
+      );
+    }
+    return { diagnosis, trigger: queued };
   }
 
   async writeEvidenceSnapshot({ spec, run, sources = [], actions = [], gates = [], outputs = [], memory = {}, failure = null }) {
@@ -447,7 +485,14 @@ export class AutopilotSupervisor {
         await this.store.audit(run.run_id, spec.id, "source_completed", `Source ${record.id} completed.`, { adapter: adapter.id, status: record.status });
       } catch (error) {
         const failure = failureFromError(error, "discovering_sources");
-        records.push({ id: source.id || adapter.id, adapter: adapter.id, status: "failed", failure });
+        records.push({
+          id: source.id || adapter.id,
+          adapter: adapter.id,
+          status: "failed",
+          title: source.title || source.id || adapter.id,
+          url: source.url || null,
+          failure
+        });
         await this.store.audit(run.run_id, spec.id, "source_completed", `Source ${source.id || adapter.id} failed.`, failure);
       }
     }

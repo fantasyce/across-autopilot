@@ -58,6 +58,9 @@ Other built-in workflows:
 - `daily-news-brief` for a content-production loop.
 - `aaa-autonomous-self-iteration` for advanced candidate-workspace product
   iteration.
+- `aaa-platform-self-repair` for supervised platform repair candidates when a
+  failed loop is classified as a validation, runtime, packaging, policy, or
+  supervisor gap.
 
 Agent-readable entrypoints:
 
@@ -68,9 +71,15 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.8`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.8` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.9`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.9` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.9` adds platform self-repair routing for AAA loop engineering. Failed
+self-iteration runs can now be classified into platform-vs-candidate failure
+categories; eligible platform gaps enqueue `aaa-platform-self-repair`, which
+creates an isolated B repair candidate, validates it, and stops at human-review
+promotion.
 
 `v0.2.8` adds the async task projection for LoopSpec runs, external skills
 radar input, loop-memory compaction, and Plugin Compatibility Lab v2 projection
@@ -154,6 +163,12 @@ Important distinction:
   validates B, runs the B-to-C self-hosting probe, and
   requires an independent reviewer gate before promotion evidence is considered
   ready.
+- `aaa-platform-self-repair` is a producer-side meta-loop for the cases where
+  a failed self-iteration exposes a platform supervision gap rather than an
+  ordinary candidate bug. The router is conservative: provider outages,
+  security stops, missing approval, and normal candidate test failures do not
+  auto-escalate. Eligible repair runs still mutate only B candidate workspaces,
+  attach replay evidence, and require human promotion review.
 - Host fallback targets and host-authored code templates are conformance-only.
   Production autonomous loops preserve openness by failing with evidence when
   model target generation or model patch generation cannot be repaired.

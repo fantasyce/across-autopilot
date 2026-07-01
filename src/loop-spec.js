@@ -9,6 +9,7 @@ export const PACKAGE_ROOT = dirname(fileURLToPath(new URL("../package.json", imp
 
 export const BUILT_IN_SPEC_PATHS = Object.freeze({
   "aaa-autonomous-self-iteration": join(PACKAGE_ROOT, "examples", "aaa-autonomous-self-iteration.loop.json"),
+  "aaa-platform-self-repair": join(PACKAGE_ROOT, "examples", "aaa-platform-self-repair.loop.json"),
   "aaa-self-iteration-product": join(PACKAGE_ROOT, "examples", "aaa-self-iteration-product.loop.json"),
   "aaa-research-driven-self-iteration": join(PACKAGE_ROOT, "examples", "aaa-research-driven-self-iteration.loop.json"),
   "aaa-release-readiness-gate": join(PACKAGE_ROOT, "examples", "aaa-release-readiness-gate.loop.json"),

@@ -1,0 +1,373 @@
+{
+  "schema_version": "across-loop-spec/1.0",
+  "id": "aaa-platform-self-repair",
+  "name": "AAA Platform Self Repair",
+  "description": "Turn a failed AAA loop-engineering run that was classified as a platform gap into an isolated B candidate repair, replay the failure as validation evidence, and stop for human promotion review.",
+  "owner": {
+    "type": "local_user",
+    "id": "default"
+  },
+  "compatibility": {
+    "min_autopilot_version": ">=0.2.9",
+    "required_orchestrator": ">=0.7.0",
+    "required_context": ">=0.8.0",
+    "required_host": ">=0.9.0"
+  },
+  "required_capabilities": [
+    "source.manual_input",
+    "source.trigger_payload",
+    "action.source_digest",
+    "action.candidate_ecosystem_acquire",
+    "action.product_iteration_strategy",
+    "action.host_code_iteration",
+    "action.candidate_ecosystem_diff",
+    "action.candidate_ecosystem_validation",
+    "action.candidate_app_lifecycle",
+    "action.candidate_self_hosting_probe",
+    "action.semantic_alignment_review",
+    "output.markdown_report",
+    "memory.pending_summary",
+    "runtime.platform_self_repair"
+  ],
+  "trigger": {
+    "type": "daemon"
+  },
+  "scope": {
+    "project_id": "across",
+    "workspace": "."
+  },
+  "autonomy": {
+    "level": 3,
+    "requires_human_approval_above": 3
+  },
+  "sources": [
+    {
+      "id": "platform-self-repair-policy",
+      "type": "manual_input",
+      "adapter": "manual_input",
+      "title": "Platform self-repair policy",
+      "content": "Repair only platform supervision gaps: validation, packaging/runtime, fallback/policy, trigger queue, or self-repair routing. Do not treat ordinary candidate implementation failures, provider failures, security policy stops, or missing approval as platform repair. All repairs must land only in B candidate workspaces and stop at human-review promotion."
+    },
+    {
+      "id": "failed-loop-trigger",
+      "type": "trigger_payload",
+      "adapter": "trigger_payload",
+      "title": "Failed loop trigger payload"
+    }
+  ],
+  "actions": {
+    "allowed": [
+      "file_read",
+      "git_read",
+      "candidate_ecosystem_acquire",
+      "product_iteration_strategy",
+      "host_code_iteration",
+      "candidate_ecosystem_diff",
+      "candidate_ecosystem_validation",
+      "candidate_app_lifecycle",
+      "candidate_self_hosting_probe",
+      "semantic_alignment_review",
+      "promotion_report_generation",
+      "quality_gate_evaluation",
+      "report_generation",
+      "write_pending_memory"
+    ],
+    "blocked": [
+      "merge_pr",
+      "release_publish",
+      "sign_artifact",
+      "write_secret"
+    ]
+  },
+  "execute": {
+    "engine": "across-orchestrator",
+    "mode": "task"
+  },
+  "outputs": [
+    {
+      "type": "markdown_report",
+      "to": "run://platform-self-repair/report.md",
+      "policy": "create"
+    },
+    {
+      "type": "json_artifact",
+      "to": "run://platform-self-repair/evidence.json",
+      "policy": "overwrite"
+    },
+    {
+      "type": "context_memory",
+      "to": "context://pending",
+      "policy": "append"
+    }
+  ],
+  "gates": [
+    {
+      "id": "four_repo_manifest_written",
+      "required": true
+    },
+    {
+      "id": "candidate_runtime_preflight_passed",
+      "required": true
+    },
+    {
+      "id": "research_iteration_strategy_ready",
+      "required": true
+    },
+    {
+      "id": "candidate_b_has_code_diff",
+      "required": true
+    },
+    {
+      "id": "source_a_unchanged",
+      "required": true
+    },
+    {
+      "id": "candidate_ecosystem_validation_passed",
+      "required": true
+    },
+    {
+      "id": "candidate_app_lifecycle_passed",
+      "required": true
+    },
+    {
+      "id": "self_hosting_probe_passed_or_not_required",
+      "required": true
+    },
+    {
+      "id": "semantic_alignment_passed",
+      "required": true
+    },
+    {
+      "id": "independent_reviewer_passed",
+      "required": true
+    },
+    {
+      "id": "distinct_reviewer_model_passed",
+      "required": true
+    },
+    {
+      "id": "promotion_report_ready",
+      "required": true
+    }
+  ],
+  "memory": {
+    "provider": "across-context",
+    "recall": true,
+    "remember": true,
+    "write_status": "pending"
+  },
+  "failure_policy": {
+    "max_retries": 0,
+    "retry_backoff": "linear",
+    "continue_on_gate_failure": false,
+    "dead_letter": "context_memory"
+  },
+  "sandbox": {
+    "filesystem": "run_scoped",
+    "network": "adapter_scoped",
+    "env": "minimal"
+  },
+  "runtime_policy": {
+    "risk_profile": "high",
+    "timeouts": {
+      "total_run_timeout_ms": 1200000,
+      "adapter_timeout_ms": 300000,
+      "model_timeout_ms": 300000
+    },
+    "budget": {
+      "max_model_calls": 12,
+      "max_candidate_repairs": 3,
+      "max_usd": 0
+    },
+    "network_policy": {
+      "mode": "adapter_scoped",
+      "allowlist": []
+    },
+    "filesystem_policy": {
+      "mode": "run_scoped",
+      "allowlist_roots": []
+    },
+    "promotion": {
+      "human_approval_required": true,
+      "merge_release_signing_blocked": true
+    }
+  },
+  "evidence_contract": {
+    "schema_version": "across-loop-evidence/1.0",
+    "required_sections": ["sources", "actions", "gates", "outputs", "memory", "audit", "candidate"]
+  },
+  "used_adapters": {
+    "sources": ["manual_input", "trigger_payload"],
+    "actions": [
+      "source_digest",
+      "candidate_ecosystem_acquire",
+      "product_iteration_strategy",
+      "host_code_iteration",
+      "candidate_ecosystem_diff",
+      "candidate_ecosystem_validation",
+      "candidate_app_lifecycle",
+      "candidate_self_hosting_probe",
+      "semantic_alignment_review",
+      "promotion_report_generation",
+      "quality_gate_evaluation",
+      "report_generation",
+      "memory_write_candidate"
+    ],
+    "outputs": ["markdown_report", "json_artifact", "context_memory"]
+  },
+  "pack_config": {
+    "target_repo": "across-autopilot",
+    "candidate_ecosystem": {
+      "mode": "snapshot",
+      "repos": []
+    },
+    "platform_self_repair": {
+      "enabled": true,
+      "promotion_only": true,
+      "replay_required": true
+    },
+    "candidate_quality": {
+      "require_existing_product_integration": true
+    },
+    "candidate_validation": {
+      "max_repairs": 3
+    },
+    "candidate_app_lifecycle": {
+      "required": true,
+      "timeout_ms": 600000
+    },
+    "self_hosting_probe": {
+      "required": true,
+      "timeout_ms": 240000
+    },
+    "research_strategy": {
+      "goal": "Read the failed loop trigger payload and choose the platform repair target that matches target_id first, then failure_category and target_repo. If the trigger payload includes target_id, select the target_catalog item with that id unless the payload evidence explicitly contradicts it. If the trigger payload includes target_repo, select a target_catalog item with the same target_repo unless the payload evidence explicitly contradicts it. Generate a bounded repair plan that fixes the platform layer generally, includes a regression test or replay fixture, and keeps promotion human-approved.",
+      "timeout_ms": 240000,
+      "candidate_targets": [
+        {
+          "id": "autopilot-self-repair-replay-fixture",
+          "target_repo": "across-autopilot",
+          "goal": "Repair an Autopilot self-repair routing or trigger payload gap with the smallest durable replay fixture. Treat src/platform-self-repair.js and the LoopSpec as read-only context in this default path. Add or refine tests/platform-self-repair.test.js so the failed supervisor_gap trigger payload, target_id, allowed_patch_paths, replay contract, and redaction behavior are covered. Do not edit supervisor.js, candidate-ecosystem.js, adapter-registry.js, platform-self-repair.js, README.md, or the LoopSpec in this default repair path.",
+          "allowed_patch_paths": [
+            "tests/platform-self-repair.test.js"
+          ],
+          "context_files": [
+            "src/platform-self-repair.js",
+            "tests/platform-self-repair.test.js",
+            "examples/aaa-platform-self-repair.loop.json"
+          ],
+          "validation_commands": [
+            {
+              "repo": "across-autopilot",
+              "command": "node",
+              "args": ["--test", "tests/platform-self-repair.test.js"],
+              "timeout_ms": 180000
+            },
+            {
+              "repo": "across-autopilot",
+              "command": "node",
+              "args": ["src/cli.js", "loop", "validate", "--spec", "aaa-platform-self-repair", "--json"],
+              "timeout_ms": 60000
+            }
+          ],
+          "semantic_review": {
+            "minimum_validation_commands": 2,
+            "allow_replay_fixture_only": true,
+            "reject_test_only_change": false,
+            "required_changed_path_prefixes": [
+              "across-autopilot/tests/platform-self-repair.test.js"
+            ],
+            "reject_self_proof_only": true
+          },
+          "tool_packs": ["platform_failure_router", "candidate_validation", "replay_fixture"],
+          "risk": "high",
+          "score": 99
+        },
+        {
+          "id": "aaa-host-runtime-repair",
+          "target_repo": "across-agents-assistant",
+          "goal": "Repair an AAA host API, packaged backend, runtime dependency, trigger visibility, or fallback-policy gap exposed by a failed loop. Update the host code and add regression coverage in backend tests.",
+          "allowed_patch_paths": [
+            "backend/main.py",
+            "backend/src/across_agents_assistant/api_server.py",
+            "backend/src/across_agents_assistant/loop_engineering_self_iteration.py",
+            "backend/src/across_agents_assistant/autopilot_trigger_manager.py",
+            "backend/tests/test_api_autopilot.py",
+            "backend/tests/test_live_e2e_infrastructure.py",
+            "build_app.sh",
+            "scripts/candidate_app_lifecycle.sh",
+            "scripts/run_platform_self_repair_e2e.sh",
+            "README.md"
+          ],
+          "context_files": [
+            "backend/main.py",
+            "backend/src/across_agents_assistant/api_server.py",
+            "backend/src/across_agents_assistant/loop_engineering_self_iteration.py",
+            "backend/tests/test_api_autopilot.py"
+          ],
+          "validation_commands": [
+            {
+              "repo": "across-agents-assistant",
+              "command": "python3",
+              "args": ["-m", "py_compile", "backend/main.py", "backend/src/across_agents_assistant/api_server.py"],
+              "timeout_ms": 60000
+            },
+            {
+              "repo": "across-agents-assistant",
+              "command": "python3",
+              "args": ["-m", "pytest", "backend/tests/test_api_autopilot.py", "backend/tests/test_live_e2e_infrastructure.py", "-q"],
+              "timeout_ms": 180000
+            }
+          ],
+          "semantic_review": {
+            "minimum_validation_commands": 2,
+            "required_changed_path_prefixes": [
+              "across-agents-assistant/backend/",
+              "across-agents-assistant/build_app.sh",
+              "across-agents-assistant/scripts/"
+            ],
+            "reject_self_proof_only": true
+          },
+          "tool_packs": ["host_runtime_replay", "packaging_smoke", "fallback_policy_guard"],
+          "risk": "high",
+          "score": 90
+        }
+      ]
+    },
+    "code_iteration": {
+      "timeout_ms": 300000
+    },
+    "model_policy": {
+      "required": true,
+      "provider": "minimax",
+      "model": "MiniMax-M3",
+      "direct_patches": true,
+      "temperature": 0.2,
+      "max_tokens": 8192
+    },
+    "research_model_policy": {
+      "provider": "minimax",
+      "model": "MiniMax-M3",
+      "temperature": 0.2,
+      "max_tokens": 8192
+    },
+    "builder_model_policy": {
+      "provider": "minimax",
+      "model": "MiniMax-M3",
+      "fallback_models": ["MiniMax-M2.7-highspeed", "MiniMax-M2.7", "MiniMax-M2.5-highspeed"],
+      "direct_patches": true,
+      "allow_host_validation_repair_fallback": true,
+      "temperature": 0.2,
+      "max_tokens": 8192
+    },
+    "reviewer_model_policy": {
+      "required": true,
+      "provider": "minimax",
+      "model": "MiniMax-M2.5",
+      "fallback_models": ["MiniMax-M2.7-highspeed", "MiniMax-M2.7", "MiniMax-M2.5-highspeed"],
+      "temperature": 0.0,
+      "max_tokens": 2048,
+      "require_distinct_from_builder": true
+    }
+  }
+}

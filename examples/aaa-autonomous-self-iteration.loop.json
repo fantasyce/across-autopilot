@@ -185,7 +185,12 @@
     "max_retries": 0,
     "retry_backoff": "linear",
     "continue_on_gate_failure": false,
-    "dead_letter": "context_memory"
+    "dead_letter": "context_memory",
+    "platform_self_repair": {
+      "enabled": true,
+      "repair_spec": "aaa-platform-self-repair",
+      "promotion_only": true
+    }
   },
   "sandbox": {
     "filesystem": "run_scoped",
@@ -252,6 +257,14 @@
     },
     "candidate_validation": {
       "max_repairs": 3
+    },
+    "candidate_quality": {
+      "require_existing_product_integration": true
+    },
+    "platform_self_repair": {
+      "enabled": true,
+      "repair_spec": "aaa-platform-self-repair",
+      "promotion_only": true
     },
     "candidate_app_lifecycle": {
       "required": true,
