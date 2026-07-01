@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resolveCommand, sanitizedSubprocessEnv } from "../src/process-client.js";
+import { AUTOPILOT_VERSION } from "../src/version.js";
 
 const exec = promisify(execFile);
 const cli = join(process.cwd(), "src", "cli.js");
@@ -17,6 +18,7 @@ test("plugin manifest exposes Autopilot host contract", async () => {
 
   assert.equal(manifest.id, "across-autopilot");
   assert.equal(manifest.kind, "autonomous-workflow");
+  assert.equal(manifest.version, AUTOPILOT_VERSION);
   assert.equal(manifest.capabilities.stableCandidatePromotion, true);
   assert.equal(manifest.integrations.executionEngine, "across-orchestrator");
   assert.equal(manifest.integrations.memoryProvider, "across-context");

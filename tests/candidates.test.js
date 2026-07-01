@@ -2,6 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildCandidatePlan, buildPromotionReport, createCandidate, evaluateCandidate } from "../src/candidates.js";
 import { defaultState } from "../src/state.js";
+import { AUTOPILOT_VERSION } from "../src/version.js";
+
+test("default state stable slot uses package version", () => {
+  const stableSlot = defaultState(new Date("2026-06-19T00:00:00Z")).stable_slot;
+
+  assert.equal(stableSlot.version, AUTOPILOT_VERSION);
+});
 
 test("candidate plan delegates execution to Orchestrator and memory to Context", () => {
   const plan = buildCandidatePlan({

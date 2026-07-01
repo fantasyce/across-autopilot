@@ -71,9 +71,13 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.9`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.9` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.10`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.10` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.10` keeps runtime version reporting aligned with the package version so
+MCP server info and the default stable slot cannot drift behind the managed
+plugin manifest.
 
 `v0.2.9` adds platform self-repair routing for AAA loop engineering. Failed
 self-iteration runs can now be classified into platform-vs-candidate failure

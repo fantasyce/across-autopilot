@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import assert from "node:assert/strict";
+import { AUTOPILOT_VERSION } from "../src/version.js";
 
 const exec = promisify(execFile);
 
@@ -99,6 +100,7 @@ test("mcp server exposes generic agent plugin validation and planning", async ()
     const responses = await responsesPromise;
 
     assert.equal(responses[0].result.serverInfo.name, "Across Autopilot");
+    assert.equal(responses[0].result.serverInfo.version, AUTOPILOT_VERSION);
     assert.deepEqual(responses[1].result.resources, []);
     assert.deepEqual(responses[2].result.prompts, []);
     assert.ok(responses[3].result.tools.every((tool) => tool.inputSchema?.type === "object"));

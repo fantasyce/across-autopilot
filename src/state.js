@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { componentDataHome } from "./paths.js";
+import { AUTOPILOT_VERSION } from "./version.js";
 
 const STATE_FILE = "autopilot-state.json";
 
@@ -11,7 +12,7 @@ export function defaultState(now = new Date()) {
     autonomy_level: 1,
     stable_slot: {
       slot: "stable",
-      version: "0.2.8",
+      version: AUTOPILOT_VERSION,
       status: "active",
       promoted_at: now.toISOString(),
       source: "local",

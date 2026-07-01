@@ -17,6 +17,7 @@ import {
   renderWorkflowPackTrustReceipt,
   validateWorkflowPack
 } from "./workflow-packs.js";
+import { AUTOPILOT_VERSION } from "./version.js";
 
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
   console.log("Usage: across-autopilot mcp");
@@ -219,7 +220,7 @@ async function handleLine(line) {
         },
         serverInfo: {
           name: "Across Autopilot",
-          version: "0.2.8"
+          version: AUTOPILOT_VERSION
         }
       });
     }
