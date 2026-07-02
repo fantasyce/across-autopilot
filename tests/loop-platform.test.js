@@ -648,6 +648,67 @@ test("candidate validation rejects missing exports from changed AAA runtime impo
   assert.match(smoke.stderr, /autopilot_mcp_tool_registry\.MCPToolRegistry/);
 });
 
+test("candidate validation rejects undefined AAA backend top-level runtime names", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-aaa-top-level-names-"));
+  const sourceRoot = join(home, "sources");
+  const repos = [];
+  for (const id of ["across-agents-assistant", "across-orchestrator", "across-context", "across-autopilot"]) {
+    const source = join(sourceRoot, id);
+    await createGitSource(source, id === "across-agents-assistant" ? {
+      "README.md": "# AAA\n",
+      "backend/requirements.txt": "fastapi>=0.138.2\nuvicorn>=0.49.0\n",
+      "backend/requirements_no_pyobjc.txt": "fastapi>=0.138.2\nuvicorn>=0.49.0\n",
+      "backend/src/across_agents_assistant/__init__.py": "",
+      "backend/src/across_agents_assistant/api_server.py": "from fastapi import FastAPI\napp = FastAPI()\n"
+    } : {
+      "README.md": `# ${id}\n`
+    });
+    repos.push({ id, source });
+  }
+
+  const spec = {
+    id: "aaa-top-level-names",
+    pack_config: {
+      target_repo: "across-agents-assistant",
+      candidate_ecosystem: { repos },
+      candidate_validation: { commands: [] }
+    }
+  };
+  const run = { run_id: "run-aaa-top-level-names" };
+  const env = { ...process.env, ACROSS_HOME: home };
+  const acquired = await acquireCandidateEcosystem({ spec, run, env });
+  const aaaTarget = acquired.repos.find((repo) => repo.id === "across-agents-assistant").target;
+  await writeFile(
+    join(aaaTarget, "backend", "src", "across_agents_assistant", "api_server.py"),
+    "from fastapi import FastAPI\napp = FastAPI()\nif _app is not None and _app.router is not None:\n    pass\n",
+    "utf8"
+  );
+
+  const diff = await candidateEcosystemDiff({
+    spec,
+    run,
+    actions: [{ adapter: "candidate_ecosystem_acquire", result: acquired }],
+    env
+  });
+  const validated = await validateCandidateEcosystem({
+    spec,
+    run,
+    actions: [
+      { adapter: "candidate_ecosystem_acquire", result: acquired },
+      { adapter: "candidate_ecosystem_diff", result: diff }
+    ],
+    env
+  });
+  const smoke = validated.commands.find((command) => (
+    command.implicit && command.summary === "AAA backend top-level name contract smoke"
+  ));
+
+  assert.equal(validated.status, "attention");
+  assert.ok(smoke);
+  assert.equal(smoke.status, "failed");
+  assert.match(smoke.stderr, /undefined AAA backend top-level reference\(s\).*api_server\.py:_app/);
+});
+
 test("candidate ecosystem product snapshot preserves executable root files", async () => {
   const home = await mkdtemp(join(tmpdir(), "across-autopilot-product-file-mode-"));
   const previousEnv = snapshotEnv(["ACROSS_AUTOPILOT_PRODUCT_MODE"]);
@@ -1422,6 +1483,86 @@ test("manifest inspection feeds deterministic dependency and license review pack
   assert.ok(dependency.risks.some((risk) => risk.risk === "risky_install_script"));
   assert.ok(dependency.risks.some((risk) => risk.risk === "missing_lockfile"));
   assert.equal(dependency.status, "failed");
+});
+
+test("autonomous candidate validation can complete with explicit rejected-candidate evidence", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-rejected-candidate-"));
+  const store = new RunStore({ env: { ...process.env, ACROSS_HOME: home } });
+  const registry = new AdapterRegistry({ store });
+  let lifecycleCalled = false;
+  registerBuiltIns(registry);
+  registry.registerAction({
+    id: "candidate_ecosystem_validation",
+    async run() {
+      return {
+        id: "candidate_ecosystem_validation",
+        adapter: "candidate_ecosystem_validation",
+        status: "attention",
+        started_at: new Date().toISOString(),
+        completed_at: new Date().toISOString(),
+        inputs: [],
+        outputs: [],
+        result: {
+          status: "attention",
+          commands: [{
+            repo: "across-agents-assistant",
+            command: "python3",
+            args: ["-c", "raise AssertionError('bad candidate')"],
+            status: "failed",
+            stderr: "AssertionError: bad candidate",
+            diagnostic: {
+              failure_kind: "candidate_test_assertion",
+              failure_summary: "Candidate tests or assertions failed."
+            }
+          }]
+        },
+        failure: { code: "gate.failed", message: "Candidate ecosystem validation failed." }
+      };
+    }
+  });
+  registry.registerAction({
+    id: "candidate_app_lifecycle",
+    async run() {
+      lifecycleCalled = true;
+      return {
+        id: "candidate_app_lifecycle",
+        adapter: "candidate_app_lifecycle",
+        status: "passed",
+        started_at: new Date().toISOString(),
+        completed_at: new Date().toISOString(),
+        inputs: [],
+        outputs: [],
+        result: { status: "passed" }
+      };
+    }
+  });
+  const supervisor = new AutopilotSupervisor({
+    store,
+    registry,
+    orchestratorClient: new FakeOrchestrator(),
+    contextClient: new FakeContext()
+  });
+  const spec = minimalSpec({
+    id: "rejected-candidate-loop",
+    actions: ["candidate_ecosystem_validation", "candidate_app_lifecycle"],
+    outputs: ["json_artifact"]
+  });
+  spec.pack_config = {
+    candidate_validation: {
+      max_repairs: 0,
+      complete_on_rejected_candidate: true
+    }
+  };
+
+  const { run, evidence } = await supervisor.run(spec);
+  const rejected = evidence.actions.find((action) => action.adapter === "candidate_rejected");
+
+  assert.equal(run.status, "completed");
+  assert.equal(lifecycleCalled, false);
+  assert.ok(rejected);
+  assert.equal(rejected.result.status, "rejected");
+  assert.equal(rejected.result.promotion_ready, false);
+  assert.equal(rejected.result.failed_command_count, 1);
 });
 
 test("evidence envelopes include integrity hashes and role separation", async () => {

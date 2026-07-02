@@ -256,7 +256,8 @@
       "repos": []
     },
     "candidate_validation": {
-      "max_repairs": 3
+      "max_repairs": 3,
+      "complete_on_rejected_candidate": true
     },
     "candidate_quality": {
       "require_existing_product_integration": true
