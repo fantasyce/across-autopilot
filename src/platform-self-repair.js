@@ -201,7 +201,7 @@ function classifyObservedSignals(observed) {
     return "packaging_gap";
   }
   if (/(candidate_ecosystem_validation)/.test(text)
-    && /(modulenotfounderror|importerror|nameerror|missing internal api import|undeclared runtime dependency|aaa backend api import contract)/.test(text)
+    && /(modulenotfounderror|importerror|nameerror|missing internal api import|undeclared runtime dependency|undefined aaa backend top-level reference|aaa backend api import contract|aaa backend top-level name contract)/.test(text)
     && !platformValidationGapSignal(text)) {
     return "candidate_code_failure";
   }
@@ -227,7 +227,7 @@ function candidateValidationStoppedBadCandidate(observed) {
   return observed.some((item) => (
     item.kind === "validation_command"
     && item.adapter_id === "candidate_ecosystem_validation"
-    && /(candidate_quality|unintegrated_candidate_helper|destructive_product_entrypoint_rewrite|excessive_blank_lines|placeholder_implementation|unsafe_shell_execution|hardcoded_secret_literal|pytest_dependency_in_candidate_test|undeclared runtime dependency|aaa backend api import contract)/i.test(String(item.text || ""))
+    && /(candidate_quality|unintegrated_candidate_helper|destructive_product_entrypoint_rewrite|excessive_blank_lines|placeholder_implementation|unsafe_shell_execution|hardcoded_secret_literal|pytest_dependency_in_candidate_test|undeclared runtime dependency|undefined aaa backend top-level reference|aaa backend api import contract|aaa backend top-level name contract)/i.test(String(item.text || ""))
   ));
 }
 

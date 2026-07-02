@@ -71,9 +71,15 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.12`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.12` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.13`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.13` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.13` hardens autonomous self-iteration validation: AAA candidate
+workspaces now run an implicit top-level backend name smoke test, candidate
+implementation failures stay out of platform self-repair routing, and specs can
+finish with explicit rejected-candidate evidence after validation repair
+attempts are exhausted.
 
 `v0.2.12` hardens autonomous self-iteration repair: host code iteration now
 applies append and marker-upsert patches deterministically, restores destructive

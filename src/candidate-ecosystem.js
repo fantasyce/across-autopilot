@@ -278,6 +278,61 @@ if missing:
     )
 print("AAA backend runtime dependency import contract OK", checked)`;
 
+const AAA_BACKEND_TOP_LEVEL_NAME_CONTRACT_SMOKE = `import builtins
+import symtable
+import sys
+from pathlib import Path
+
+PACKAGE = "across_agents_assistant"
+SRC = Path("backend/src")
+SPECIAL_MODULE_NAMES = {"__builtins__", "__cached__", "__doc__", "__file__", "__loader__", "__name__", "__package__", "__spec__"}
+
+def is_internal_runtime_file(path):
+    value = str(path)
+    return (
+        value in {"backend/main.py", "backend/build.py"}
+        or value.startswith("backend/src/across_agents_assistant/")
+    ) and value.endswith(".py")
+
+def contract_paths():
+    api_path = SRC / PACKAGE / "api_server.py"
+    paths = [api_path]
+    for arg in sys.argv[1:]:
+        path = Path(str(arg))
+        if is_internal_runtime_file(path) and path.exists():
+            paths.append(path)
+    unique = []
+    seen = set()
+    for path in paths:
+        key = str(path)
+        if key not in seen:
+            seen.add(key)
+            unique.append(path)
+    return unique
+
+def missing_top_level_references(path):
+    table = symtable.symtable(path.read_text(encoding="utf-8"), str(path), "exec")
+    builtin_names = set(dir(builtins)) | SPECIAL_MODULE_NAMES
+    missing = []
+    for name in table.get_identifiers():
+        symbol = table.lookup(name)
+        if name in builtin_names:
+            continue
+        if symbol.is_referenced() and not (symbol.is_assigned() or symbol.is_imported() or symbol.is_namespace()):
+            missing.append(f"{path}:{name}")
+    return missing
+
+missing = []
+checked = 0
+for checked_path in contract_paths():
+    if not checked_path.exists():
+        continue
+    checked += 1
+    missing.extend(missing_top_level_references(checked_path))
+if missing:
+    raise NameError("undefined AAA backend top-level reference(s): " + ", ".join(sorted(set(missing))))
+print("AAA backend top-level name contract OK", checked)`;
+
 const SNAPSHOT_ROOTS_BY_REPO = Object.freeze({
   "across-agents-assistant": [
     "backend/src",
@@ -1194,6 +1249,7 @@ function implicitCandidateValidationCommands({ actions = [], repos = [] } = {}) 
   if (!existsSync(join(aaaRepo.target, "backend", "src", "across_agents_assistant", "api_server.py"))) return [];
   return [
     aaaBackendApiImportSmokeCommand(changedFiles),
+    aaaBackendTopLevelNameSmokeCommand(changedFiles),
     aaaBackendRuntimeDependencyImportSmokeCommand(changedFiles)
   ];
 }
@@ -1225,6 +1281,27 @@ function aaaBackendApiImportSmokeCommand(changedFiles = []) {
     timeout_ms: 60000,
     implicit: true,
     summary: "AAA backend API import contract smoke"
+  };
+}
+
+function aaaBackendTopLevelNameSmokeCommand(changedFiles) {
+  const runtimeFiles = asArray(changedFiles)
+    .map((file) => String(file || ""))
+    .filter((file) => file.startsWith("across-agents-assistant/"))
+    .map((file) => file.slice("across-agents-assistant/".length))
+    .filter((file) => (
+      file === "backend/main.py"
+      || file === "backend/build.py"
+      || file.startsWith("backend/src/across_agents_assistant/")
+    ))
+    .filter((file) => file.endsWith(".py"));
+  return {
+    repo: "across-agents-assistant",
+    command: "python3",
+    args: ["-c", AAA_BACKEND_TOP_LEVEL_NAME_CONTRACT_SMOKE, ...runtimeFiles],
+    timeout_ms: 60000,
+    implicit: true,
+    summary: "AAA backend top-level name contract smoke"
   };
 }
 

@@ -615,6 +615,20 @@ export class AutopilotSupervisor {
         actions.push(...repairActions);
         const latestValidation = lastActionByAdapter(actions, "candidate_ecosystem_validation");
         if (latestValidation?.status !== "passed") {
+          if (completeOnRejectedCandidate(spec, latestValidation)) {
+            const rejected = candidateRejectedAction(spec, latestValidation);
+            actions.push(rejected);
+            await this.store.audit(run.run_id, spec.id, "candidate_rejected", "Candidate rejected after validation repair attempts.", rejected.result);
+            await this.writeEvidenceSnapshot({
+              spec,
+              run,
+              sources,
+              actions,
+              gates: gates.length ? gates : extractGates(actions),
+              memory: { recalled: recalledMemory, written: [] }
+            });
+            return actions;
+          }
           const failure = new LoopFailure({
             code: latestValidation?.failure?.code || FAILURE_CODES.GATE_FAILED,
             failedState: "running",
@@ -1011,6 +1025,62 @@ function extractGates(actions) {
 
 function lastActionByAdapter(actions, adapter) {
   return [...actions].reverse().find((action) => action.adapter === adapter);
+}
+
+function completeOnRejectedCandidate(spec, validation) {
+  return Boolean(
+    spec?.pack_config?.candidate_validation?.complete_on_rejected_candidate === true
+      && validation?.status
+      && validation.status !== "passed"
+      && validationHasCandidateCodeFailure(validation)
+  );
+}
+
+function validationHasCandidateCodeFailure(validation) {
+  const commands = validation?.result?.commands || [];
+  if (!Array.isArray(commands) || !commands.length) return false;
+  return commands.some((command) => {
+    if (command?.status === "passed") return false;
+    const kind = String(command?.diagnostic?.failure_kind || "");
+    const text = `${kind}\n${command?.summary || ""}\n${command?.stderr || ""}`.toLowerCase();
+    return /(candidate_quality_failure|candidate_test_assertion|candidate_import_failure|candidate_exception|validation_command_failed)/.test(kind)
+      || /(candidate_quality|assertionerror|importerror|nameerror|undefined aaa backend top-level reference|missing internal api import|undeclared aaa backend runtime import)/.test(text);
+  });
+}
+
+function candidateRejectedAction(spec, validation) {
+  const failedCommands = (validation?.result?.commands || [])
+    .filter((command) => command?.status !== "passed")
+    .map((command) => ({
+      repo: command.repo || null,
+      summary: command.summary || null,
+      command: [command.command, ...(Array.isArray(command.args) ? command.args : [])].filter(Boolean).join(" ").slice(0, 500),
+      diagnostic: command.diagnostic || null,
+      stderr_tail: String(command.stderr || "").slice(-1000)
+    }))
+    .slice(0, 12);
+  const now = new Date().toISOString();
+  return {
+    id: "candidate_rejected",
+    adapter: "candidate_rejected",
+    status: "passed",
+    started_at: now,
+    completed_at: now,
+    autonomy_level: spec?.autonomy?.level ?? 0,
+    role: "validator",
+    inputs: ["candidate_ecosystem_validation"],
+    outputs: ["candidate_rejection"],
+    result: {
+      schema_version: "across-autopilot-candidate-rejection/1.0",
+      status: "rejected",
+      reason: "candidate_validation_failed_after_repair",
+      validation_status: validation?.status || null,
+      failed_command_count: failedCommands.length,
+      failed_commands: failedCommands,
+      promotion_ready: false,
+      human_review_required: false
+    }
+  };
 }
 
 function runningActionRecord(id, adapter, startedAt, spec, repairAttempt = null) {
