@@ -212,8 +212,9 @@
     },
     "model_policy": {
       "required": true,
-      "provider": "minimax",
-      "model": "MiniMax-M3",
+      "agent_id": "codex",
+      "provider": "local-agent",
+      "model": "codex",
       "temperature": 0.2,
       "max_tokens": 2200,
       "direct_patches": true,
@@ -240,8 +241,9 @@
   },
   "model_policy": {
     "required": true,
-    "provider": "minimax",
-    "model": "MiniMax-M3",
+    "agent_id": "codex",
+    "provider": "local-agent",
+    "model": "codex",
     "temperature": 0.2,
     "max_tokens": 2200,
     "direct_patches": true,

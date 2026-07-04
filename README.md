@@ -71,9 +71,12 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.14`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.14` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.15`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.15` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.15` finishes the Codex migration for AAA self-iteration loops by moving
+platform self-repair and older self-iteration LoopSpecs off MiniMax defaults.
 
 `v0.2.14` hardens autonomous self-iteration execution: the AAA self-iteration
 spec now routes research, builder, and reviewer roles through the local Codex

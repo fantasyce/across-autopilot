@@ -339,22 +339,24 @@
     },
     "model_policy": {
       "required": true,
-      "provider": "minimax",
-      "model": "MiniMax-M3",
+      "agent_id": "codex",
+      "provider": "local-agent",
+      "model": "codex",
       "direct_patches": true,
       "temperature": 0.2,
       "max_tokens": 8192
     },
     "research_model_policy": {
-      "provider": "minimax",
-      "model": "MiniMax-M3",
+      "agent_id": "codex",
+      "provider": "local-agent",
+      "model": "codex",
       "temperature": 0.2,
       "max_tokens": 8192
     },
     "builder_model_policy": {
-      "provider": "minimax",
-      "model": "MiniMax-M3",
-      "fallback_models": ["MiniMax-M2.7-highspeed", "MiniMax-M2.7", "MiniMax-M2.5-highspeed"],
+      "agent_id": "codex",
+      "provider": "local-agent",
+      "model": "codex",
       "direct_patches": true,
       "allow_host_validation_repair_fallback": true,
       "temperature": 0.2,
@@ -362,12 +364,12 @@
     },
     "reviewer_model_policy": {
       "required": true,
-      "provider": "minimax",
-      "model": "MiniMax-M2.5",
-      "fallback_models": ["MiniMax-M2.7-highspeed", "MiniMax-M2.7", "MiniMax-M2.5-highspeed"],
+      "agent_id": "codex",
+      "provider": "local-agent",
+      "model": "codex",
       "temperature": 0.0,
-      "max_tokens": 2048,
-      "require_distinct_from_builder": true
+      "max_tokens": 4096,
+      "require_distinct_from_builder": false
     }
   }
 }
