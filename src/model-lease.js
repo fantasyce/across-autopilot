@@ -90,7 +90,7 @@ export function publicCandidateModelLease(lease, path = null) {
 }
 
 export function requestCandidateModelLease(leaseSummary) {
-  if (!leaseSummary) return null;
+  if (!leaseSummary || typeof leaseSummary !== "object") return {};
   return {
     schema_version: leaseSummary.schema_version,
     lease_id: leaseSummary.lease_id,

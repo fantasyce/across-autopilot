@@ -367,7 +367,7 @@ const SNAPSHOT_ROOTS_BY_REPO = Object.freeze({
 });
 
 export const CANDIDATE_SOCKET_RELATIVE_PATH = Object.freeze(["aaa", "run", "across-agents.sock"]);
-export const MAX_MACOS_UNIX_SOCKET_PATH_BYTES = 103;
+export const MAX_MACOS_UNIX_SOCKET_PATH_BYTES = 100;
 
 function modelPolicyForRole(spec, role) {
   const pack = spec.pack_config || {};
@@ -1165,7 +1165,7 @@ export async function runCandidateAppLifecycle({ spec, run, actions, env = proce
       maxBuffer: Number(policy.max_buffer || 10 * 1024 * 1024)
     });
     const result = await readJson(outputPath);
-    const llmStatus = result.llm_status || null;
+    const llmStatus = nonEmptyRecord(result.llm_status);
     const modelLeaseValid = !llmStatus || (
       llmStatus.available === true
       && llmStatus.availability_source === "candidate_model_lease"
@@ -1763,6 +1763,8 @@ export async function semanticAlignmentReview({ spec, run = null, actions, env =
     || explicitReviewerPolicy.provider_id
     || explicitReviewerPolicy.model
     || explicitReviewerPolicy.model_id
+    || explicitReviewerPolicy.agent_id
+    || explicitReviewerPolicy.agent
   );
   const distinctModelRequired = review.require_distinct_model !== false && Boolean(
     review.independent_model_required
@@ -2025,9 +2027,10 @@ export function ecosystemGateStatus(id, { actions }) {
   if (id === "distinct_reviewer_model_passed") {
     const review = actionResult(actions, "semantic_alignment_review");
     const separation = review?.model_separation || {};
+    const notRequired = separation.required === false || separation.status === "not_required";
     return [
-      separation.status === "passed",
-      "Reviewer model was distinct from builder model.",
+      notRequired || separation.status === "passed",
+      notRequired ? "Distinct reviewer model was not required by policy." : "Reviewer model was distinct from builder model.",
       separation.reason || "Reviewer model separation was not proven."
     ];
   }
@@ -2138,7 +2141,7 @@ const DESTRUCTIVE_PRODUCT_ENTRYPOINT_RULES = Object.freeze([
     repo: "across-agents-assistant",
     path: "backend/src/across_agents_assistant/loop_engineering_capability_pack.py",
     minDeletions: 120,
-    maxDeletionToAdditionRatio: 8
+    maxDeletionToAdditionRatio: 4
   },
   {
     repo: "across-autopilot",
@@ -3559,11 +3562,15 @@ function safeSegment(value) {
     .replace(/^-+|-+$/g, "");
 }
 
+function nonEmptyRecord(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return Object.keys(value).length ? value : null;
+}
+
 function shortCandidateRuntimeKey(candidateId) {
   const safeId = safeSegment(candidateId);
-  const timestamp = safeId.match(/^\d{8}T\d{6}Z/)?.[0] || "candidate";
-  const digest = createHash("sha256").update(safeId).digest("hex").slice(0, 8);
-  return `${timestamp}-${digest}`;
+  const digest = createHash("sha256").update(safeId).digest("hex").slice(0, 12);
+  return `c-${digest}`;
 }
 
 export function candidateRuntimePreflight(config) {
@@ -3582,8 +3589,8 @@ export function candidateRuntimePreflight(config) {
     single_instance_required: true,
     cleanup_required: true,
     reason: status === "passed"
-      ? "Candidate Unix socket path is short enough for macOS Network.framework."
-      : "Candidate Unix socket path is too long for macOS Network.framework."
+      ? "Candidate Unix socket path is short enough for macOS Python AF_UNIX startup."
+      : "Candidate Unix socket path is too long for macOS Python AF_UNIX startup."
   };
 }
 

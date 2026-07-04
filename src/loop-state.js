@@ -212,13 +212,37 @@ export async function prepareAutonomousLoopState({ spec, run, sources = [], reca
       : "Prepared open autonomous self-iteration state for model-generated candidates.",
     selected_target_id: backlog[0]?.id || null
   };
+  const artifactPaths = {
+    source_signals: join(artifactsDir, "source-signals.json"),
+    quality_snapshot: join(artifactsDir, "quality-snapshot.json")
+  };
+  const contractPaths = {
+    readme: join(contractsDir, "README.md"),
+    contract: join(contractsDir, "contract.json"),
+    backlog: join(contractsDir, "backlog.json"),
+    timeline: join(contractsDir, "timeline.jsonl")
+  };
+  const toolPacks = listToolPacks();
 
-  await writeJson(join(artifactsDir, "source-signals.json"), artifact);
-  await writeJson(join(contractsDir, "contract.json"), contract);
-  await writeJson(join(contractsDir, "backlog.json"), backlog);
-  await writeFile(join(contractsDir, "README.md"), renderContractReadme(contract, backlog), "utf8");
-  await appendJsonl(join(contractsDir, "timeline.jsonl"), timelineEntry);
+  await writeJson(artifactPaths.source_signals, artifact);
+  await writeJson(contractPaths.contract, contract);
+  await writeJson(contractPaths.backlog, backlog);
+  await writeFile(contractPaths.readme, renderContractReadme(contract, backlog), "utf8");
+  await appendJsonl(contractPaths.timeline, timelineEntry);
   await appendJsonl(join(logsDir, "global-timeline.jsonl"), timelineEntry);
+  await writeJson(artifactPaths.quality_snapshot, buildSelfIterationQualitySnapshot({
+    spec,
+    run,
+    artifactPaths,
+    contractPaths,
+    sourceSignals,
+    contract,
+    backlog,
+    recentGlobalTimeline,
+    recentLoopTimeline,
+    currentTimelineEntry: timelineEntry,
+    toolPacks
+  }));
 
   return {
     schema_version: LOOP_STATE_SCHEMA,
@@ -226,22 +250,95 @@ export async function prepareAutonomousLoopState({ spec, run, sources = [], reca
     artifacts_dir: artifactsDir,
     contract_dir: contractsDir,
     global_timeline_path: join(logsDir, "global-timeline.jsonl"),
-    artifact_paths: {
-      source_signals: join(artifactsDir, "source-signals.json")
-    },
-    contract_paths: {
-      readme: join(contractsDir, "README.md"),
-      contract: join(contractsDir, "contract.json"),
-      backlog: join(contractsDir, "backlog.json"),
-      timeline: join(contractsDir, "timeline.jsonl")
-    },
+    artifact_paths: artifactPaths,
+    contract_paths: contractPaths,
     source_signals: sourceSignals,
     contract,
     backlog,
     recent_global_timeline: recentGlobalTimeline,
     recent_loop_timeline: recentLoopTimeline,
     target_generation: targetGenerationPolicy(spec),
-    tool_packs: listToolPacks()
+    tool_packs: toolPacks
+  };
+}
+
+export function buildSelfIterationQualitySnapshot({
+  spec,
+  run,
+  artifactPaths = {},
+  contractPaths = {},
+  sourceSignals = [],
+  contract = {},
+  backlog = [],
+  recentGlobalTimeline = [],
+  recentLoopTimeline = [],
+  currentTimelineEntry = null,
+  toolPacks = []
+} = {}) {
+  const contractPathValues = Object.values(contractPaths).filter(Boolean);
+  const artifactPathValues = Object.values(artifactPaths).filter(Boolean);
+  const timelineTail = [
+    ...asArray(recentGlobalTimeline).slice(-5),
+    ...asArray(recentLoopTimeline).slice(-5),
+    currentTimelineEntry
+  ].filter(Boolean).map((event) => ({
+    at: event.at || null,
+    type: event.type || null,
+    run_id: event.run_id || null,
+    spec_id: event.spec_id || null,
+    selected_target_id: event.selected_target_id || null,
+    summary: event.summary || null
+  }));
+  return {
+    schema_version: "across-autopilot-self-iteration-quality-snapshot/1.0",
+    spec_id: spec?.id || contract.spec_id || null,
+    run_id: run?.run_id || contract.run_id || null,
+    status: contractPathValues.length && asArray(toolPacks).length ? "ready" : "attention",
+    artifacts: {
+      paths: artifactPaths,
+      path_count: artifactPathValues.length
+    },
+    contracts: {
+      paths: contractPaths,
+      path_count: contractPathValues.length,
+      backlog_policy: contract.backlog_policy || null,
+      workflow_step_count: asArray(contract.workflow).length
+    },
+    source_signals: {
+      count: asArray(sourceSignals).length,
+      ids: asArray(sourceSignals).map((signal) => signal.id).filter(Boolean).slice(0, 20),
+      keyword_count: uniqueStrings(asArray(sourceSignals).flatMap((signal) => signal.keywords)).length
+    },
+    backlog: {
+      count: asArray(backlog).length,
+      top_candidates: asArray(backlog).slice(0, 5).map((item) => ({
+        id: item.id,
+        score: item.score,
+        target_repo: item.target_repo,
+        risk: item.risk,
+        tool_packs: asArray(item.tool_packs)
+      }))
+    },
+    timeline: {
+      global_recent_count: asArray(recentGlobalTimeline).length,
+      loop_recent_count: asArray(recentLoopTimeline).length,
+      tail: timelineTail.slice(-10)
+    },
+    tool_pack_status: {
+      registered_count: asArray(toolPacks).length,
+      packs: asArray(toolPacks).map((pack) => ({
+        id: pack.id,
+        owner: pack.owner,
+        boundary: pack.boundary,
+        capability_refs: asArray(pack.capability_refs),
+        deterministic_role: pack.deterministic_role || null
+      }))
+    },
+    review_hints: [
+      "Use this snapshot before accepting model-generated targets.",
+      "Check artifact and contract paths before reviewing candidate code.",
+      "Require validation and human promotion evidence before any merge or release."
+    ]
   };
 }
 
