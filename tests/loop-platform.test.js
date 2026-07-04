@@ -66,10 +66,14 @@ test("candidate runtime defaults to short app-safe paths", () => {
   const config = candidateConfig({ id: "aaa-research-driven-self-iteration", pack_config: {} }, run, env);
   const socketPath = join(config.app_home, "run", "across-agents.sock");
 
-  assert.match(config.runtime_home, /\/\.across\/c\/20260621T103300Z-[a-f0-9]{8}$/);
+  assert.match(config.runtime_home, /\/\.across\/c\/c-[a-f0-9]{12}$/);
   assert.equal(config.app_home, join(config.runtime_home, "aaa"));
-  assert.ok(socketPath.length < 100, `candidate app socket path must stay short for macOS Unix sockets: ${socketPath.length}`);
+  assert.ok(
+    Buffer.byteLength(socketPath, "utf8") < 100,
+    `candidate app socket path must stay short for macOS Python AF_UNIX startup: ${socketPath.length}`
+  );
   assert.equal(config.runtime_preflight.status, "passed");
+  assert.ok(config.runtime_preflight.socket_path_bytes < config.runtime_preflight.max_socket_path_bytes);
   assert.equal(config.runtime_preflight.single_instance_required, true);
   assert.equal(config.runtime_preflight.cleanup_required, true);
 });
@@ -818,6 +822,89 @@ process.stdout.write(JSON.stringify({
   assert.deepEqual(result.changed_files, ["across-agents-assistant/backend/src/across_agents_assistant/lease_candidate.py"]);
 });
 
+test("research strategy sends empty candidate model lease object when none is configured", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-empty-model-lease-"));
+  const repo = join(home, "candidate", "across-agents-assistant");
+  await mkdir(repo, { recursive: true });
+  const command = join(home, "host-research-empty-lease.js");
+  await writeFile(command, `#!/usr/bin/env node
+const args = process.argv.slice(2);
+const request = JSON.parse(args[args.indexOf("--request-json") + 1]);
+if (!request.candidate_model_lease || typeof request.candidate_model_lease !== "object" || Array.isArray(request.candidate_model_lease)) {
+  throw new Error("candidate_model_lease must be an object");
+}
+if (Object.keys(request.candidate_model_lease).length !== 0) {
+  throw new Error("empty candidate_model_lease expected when no lease is configured");
+}
+process.stdout.write(JSON.stringify({
+  schema_version: "across-host-research-decision/1.0",
+  status: "passed",
+  model_backed: true,
+  provider: "fake-host",
+  model: "fake-researcher",
+  decision_hash: "empty-lease",
+  candidate_model_lease: request.candidate_model_lease,
+  decision: "implement",
+  selected_target_id: "empty-lease-target",
+  summary: "Select target with empty lease.",
+  selected_iteration: {
+    target_id: "empty-lease-target",
+    target_repo: "across-agents-assistant",
+    goal: "Add empty lease coverage.",
+    allowed_patch_paths: ["backend/src/across_agents_assistant/empty_lease.py"],
+    validation_commands: [],
+    semantic_review: { minimum_validation_commands: 0 },
+    risk: "low"
+  },
+  rejected_directions: []
+}));
+`, "utf8");
+
+  const env = {
+    ...process.env,
+    ACROSS_HOME: home,
+    ACROSS_AAA_HOST_RESEARCH_COMMAND: JSON.stringify(["node", command])
+  };
+  try {
+    const result = await runProductIterationStrategy({
+      spec: {
+        id: "empty-model-lease",
+        description: "Verify no configured model lease still sends an object.",
+        pack_config: {
+          target_repo: "across-agents-assistant",
+          research_strategy: {
+            candidate_targets: [{
+              id: "empty-lease-target",
+              target_repo: "across-agents-assistant",
+              goal: "Add empty lease coverage.",
+              allowed_patch_paths: ["backend/src/across_agents_assistant/empty_lease.py"],
+              validation_commands: [],
+              semantic_review: { minimum_validation_commands: 0 }
+            }]
+          }
+        }
+      },
+      run: { run_id: "run-empty-model-lease" },
+      sources: [],
+      recalledMemory: [],
+      actions: [{
+        adapter: "candidate_ecosystem_acquire",
+        result: {
+          candidate_id: "candidate-empty-model-lease",
+          repos: [{ id: "across-agents-assistant", target: repo, source: repo }],
+          four_repo_manifest: true
+        }
+      }],
+      env
+    });
+
+    assert.equal(result.status, "passed");
+    assert.deepEqual(result.candidate_model_lease, {});
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("host code iteration repair fails clearly when patches make no changes", async () => {
   const home = await mkdtemp(join(tmpdir(), "across-autopilot-noop-repair-"));
   const sourcesRoot = join(home, "sources");
@@ -931,6 +1018,7 @@ test("candidate runtime preflight rejects socket paths that would crash macOS Ne
   assert.equal(preflight.status, "failed");
   assert.ok(preflight.socket_path_bytes > preflight.max_socket_path_bytes);
   assert.match(preflight.reason, /too long/);
+  assert.equal(preflight.max_socket_path_bytes, 100);
 });
 
 test("adapter capabilities expose stable Tool Packs", () => {
@@ -948,6 +1036,7 @@ test("adapter capabilities expose stable Tool Packs", () => {
   assert.ok(packIds.includes("validation_harness"));
   assert.ok(packIds.includes("candidate_diff_quality"));
   assert.ok(packIds.includes("promotion_attestation"));
+  assert.ok(packIds.includes("self_iteration_quality_snapshot"));
   assert.ok(capabilities.tool_packs.every((pack) => Array.isArray(pack.capability_refs)));
 });
 
@@ -2559,13 +2648,14 @@ if (!request.allowed_patch_paths.includes("backend/src/across_agents_assistant/a
 if (!request.allowed_patch_paths.includes("backend/src/across_agents_assistant/api_server.py")) {
   throw new Error("expected existing AAA integration surface");
 }
-if (request.model_policy?.model !== "fake-loop-engineer") throw new Error("expected selected builder model");
+if (request.model_policy?.agent_id !== "codex") throw new Error("expected selected builder agent");
+if (request.model_policy?.model !== "codex") throw new Error("expected selected builder model");
 console.log(JSON.stringify({
   schema_version: "across-host-code-iteration/1.0",
   status: "passed",
   model_backed: true,
-  provider: "fake-host",
-  model: "fake-loop-engineer",
+  provider: "local-agent",
+  model: "codex",
   decision_hash: "fake-autonomous-code",
   summary: "Add Tool Pack policy helper",
   patches: [
@@ -2591,16 +2681,17 @@ console.log(JSON.stringify({
   const reviewCommand = join(home, "host-review-command.js");
   await writeFile(reviewCommand, `#!/usr/bin/env node
 const request = JSON.parse(process.argv[process.argv.indexOf("--request-json") + 1]);
-if (request.builder_model?.model !== "fake-loop-engineer") {
+if (request.builder_model?.model !== "codex") {
   throw new Error("expected builder model evidence");
 }
-if (request.model_policy?.model !== "fake-reviewer") throw new Error("expected selected reviewer model");
+if (request.model_policy?.agent_id !== "codex") throw new Error("expected selected reviewer agent");
+if (request.model_policy?.model !== "codex") throw new Error("expected selected reviewer model");
 console.log(JSON.stringify({
   schema_version: "across-host-review-decision/1.0",
   status: "passed",
   model_backed: true,
-  provider: "fake-host",
-  model: "fake-reviewer",
+  provider: "local-agent",
+  model: "codex",
   decision_hash: "fake-autonomous-review",
   recommendation: "review",
   merge_recommendation: "open_review_pr",
@@ -2643,7 +2734,7 @@ console.log(JSON.stringify({
       type: "manual_input",
       adapter: "manual_input",
       title: "Architecture signal",
-      content: "Stable Tool Packs, guardrails, context engineering, and distinct reviewer models should guide autonomous iteration."
+      content: "Stable Tool Packs, guardrails, context engineering, and local Codex reviewer roles should guide autonomous iteration."
     }];
     spec.used_adapters.sources = ["manual_input"];
     spec.pack_config.self_hosting_probe.required = false;
@@ -2660,8 +2751,8 @@ console.log(JSON.stringify({
     const { run, evidence } = await supervisor.run(specPath, {
       modelOverrides: {
         research: { provider: "fake-host", model: "fake-researcher" },
-        builder: { agent_id: "minimax", provider: "fake-host", model: "fake-loop-engineer" },
-        reviewer: { agent_id: "minimax", provider: "fake-host", model: "fake-reviewer", require_distinct_from_builder: true }
+        builder: { agent_id: "codex", provider: "local-agent", model: "codex" },
+        reviewer: { agent_id: "codex", provider: "local-agent", model: "codex", require_distinct_from_builder: false }
       }
     });
 
@@ -2669,6 +2760,7 @@ console.log(JSON.stringify({
     const strategy = evidence.actions.find((action) => action.adapter === "product_iteration_strategy").result;
     assert.equal(strategy.autonomous, true);
     assert.ok(strategy.autonomous_state.contract_paths.readme.endsWith("README.md"));
+    assert.ok(strategy.autonomous_state.artifact_paths.quality_snapshot.endsWith("quality-snapshot.json"));
     assert.ok(strategy.dynamic_backlog.length >= 3);
     assert.equal(strategy.selected_target_id, "tool-pack-policy-generated");
     assert.equal(strategy.candidate_comparison.selected_target_id, "tool-pack-policy-generated");
@@ -2685,8 +2777,9 @@ console.log(JSON.stringify({
     assert.ok(evidence.candidate.research_strategy.dynamic_backlog_count >= 3);
     assert.ok(evidence.candidate.research_strategy.tool_packs.includes("candidate_workspace"));
     assert.equal(evidence.candidate.independent_reviewer.independent, true);
-    assert.equal(evidence.candidate.independent_reviewer.model, "fake-reviewer");
-    assert.equal(evidence.candidate.independent_reviewer.model_separation.status, "passed");
+    assert.equal(evidence.candidate.independent_reviewer.model, "codex");
+    assert.equal(evidence.candidate.independent_reviewer.model_separation.required, false);
+    assert.equal(evidence.candidate.independent_reviewer.model_separation.status, "not_required");
     assert.ok(evidence.candidate.changed_files.includes("across-agents-assistant/backend/src/across_agents_assistant/api_server.py"));
     assert.ok(evidence.candidate.changed_files.includes("across-agents-assistant/backend/src/across_agents_assistant/autopilot_tool_pack_policy.py"));
     assert.ok(evidence.gates.find((gate) => gate.id === "dynamic_backlog_ready" && gate.status === "passed"));
@@ -2695,6 +2788,12 @@ console.log(JSON.stringify({
     assert.ok(evidence.gates.find((gate) => gate.id === "distinct_reviewer_model_passed" && gate.status === "passed"));
     assert.equal(await fileExists(strategy.autonomous_state.contract_paths.backlog), true);
     assert.equal(await fileExists(strategy.autonomous_state.global_timeline_path), true);
+    assert.equal(await fileExists(strategy.autonomous_state.artifact_paths.quality_snapshot), true);
+    const qualitySnapshot = JSON.parse(await readFile(strategy.autonomous_state.artifact_paths.quality_snapshot, "utf8"));
+    assert.equal(qualitySnapshot.schema_version, "across-autopilot-self-iteration-quality-snapshot/1.0");
+    assert.equal(qualitySnapshot.status, "ready");
+    assert.ok(qualitySnapshot.tool_pack_status.packs.some((pack) => pack.id === "self_iteration_quality_snapshot"));
+    assert.ok(qualitySnapshot.review_hints.length > 0);
     assert.equal(await readFile(join(aaaSource, "README.md"), "utf8"), "# AAA Source\n");
   } finally {
     restoreEnv(previousEnv);
@@ -3426,6 +3525,67 @@ printf '{"status":"passed","candidate_id":"cand-app","bundle_id":"app.acrossagen
   assert.equal(promotion.promotion_ready, true);
 });
 
+test("candidate app lifecycle allows empty llm status when no candidate model lease is present", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-app-lifecycle-no-lease-"));
+  const repo = join(home, "candidate", "across-agents-assistant");
+  const script = join(home, "fake-candidate-app-lifecycle-no-lease.sh");
+  await mkdir(repo, { recursive: true });
+  await writeFile(script, `#!/bin/sh
+out=""
+app=""
+runtime=""
+home_arg=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output) out="$2"; shift 2 ;;
+    --app-path) app="$2"; shift 2 ;;
+    --runtime-home) runtime="$2"; shift 2 ;;
+    --app-home) home_arg="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$(dirname "$app")" "$(dirname "$out")"
+mkdir -p "$app"
+printf '{"status":"passed","candidate_id":"cand-app-no-lease","bundle_id":"app.acrossagents.assistant.candidate.cand-app-no-lease","app_path":"%s","runtime_home":"%s","app_home":"%s","socket_path":"%s/run/across-agents.sock","socket_path_bytes":70,"cleaned_up":true,"crash_reports":[],"health":{"status":"ok"},"llm_status":{}}\\n' "$app" "$runtime" "$home_arg" "$home_arg" > "$out"
+`, "utf8");
+  await exec("chmod", ["+x", script]);
+
+  const result = await runCandidateAppLifecycle({
+    spec: {
+      id: "candidate-app-lifecycle-no-lease",
+      pack_config: {
+        candidate_app_lifecycle: { required: true, command: JSON.stringify(["bash", script]) }
+      }
+    },
+    run: { run_id: "run-candidate-app-lifecycle-no-lease", outputs_dir: join(home, "outputs") },
+    actions: [
+      {
+        adapter: "candidate_ecosystem_acquire",
+        result: {
+          candidate_id: "cand-app-no-lease",
+          base_dir: join(home, "candidate"),
+          runtime_home: join(home, "runtime"),
+          app_home: join(home, "runtime", "aaa"),
+          app_dir: join(home, "candidate-apps", "cand-app-no-lease"),
+          runtime_preflight: { status: "passed", socket_path: join(home, "runtime", "aaa", "run", "across-agents.sock"), socket_path_bytes: 70 },
+          repos: [{ id: "across-agents-assistant", target: repo }]
+        }
+      },
+      {
+        adapter: "candidate_ecosystem_diff",
+        result: {
+          changed_files: ["across-agents-assistant/backend/src/across_agents_assistant/example.py"]
+        }
+      }
+    ],
+    env: { ...process.env, ACROSS_HOME: home }
+  });
+
+  assert.equal(result.status, "passed");
+  assert.equal(result.health.status, "ok");
+  assert.equal(result.llm_status, null);
+});
+
 test("candidate app lifecycle failure includes backend log tails", async () => {
   const home = await mkdtemp(join(tmpdir(), "across-autopilot-app-lifecycle-failure-"));
   const repo = join(home, "candidate", "across-agents-assistant");
@@ -3752,6 +3912,51 @@ test("candidate diff blocks destructive product entrypoint rewrites before app l
   assert.equal(qualityFailure.diagnostic.failure_kind, "candidate_quality_failure");
 });
 
+test("candidate diff blocks destructive capability pack rewrites before repair", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-capability-pack-rewrite-"));
+  const repo = join(home, "across-agents-assistant");
+  const packPath = "backend/src/across_agents_assistant/loop_engineering_capability_pack.py";
+  await createGitSource(repo, {
+    [packPath]: Array.from(
+      { length: 220 },
+      (_, index) => `CAPABILITY_${index} = {'id': 'pack-${index}', 'label': 'Pack ${index}'}`
+    ).join("\n") + "\n"
+  });
+  await writeFile(
+    join(repo, packPath),
+    Array.from({ length: 40 }, (_, index) => `NEW_CAPABILITY_${index} = {'id': 'new-${index}'}`).join("\n") + "\n",
+    "utf8"
+  );
+
+  const acquire = {
+    adapter: "candidate_ecosystem_acquire",
+    result: { repos: [{ id: "across-agents-assistant", target: repo }] }
+  };
+  const spec = { id: "aaa-autonomous-self-iteration", pack_config: { target_repo: "across-agents-assistant" } };
+  const diff = await candidateEcosystemDiff({
+    spec,
+    run: { run_id: "run-destructive-capability-pack" },
+    actions: [acquire]
+  });
+  const finding = diff.repos[0].quality_findings.find((item) => item.id === "destructive_product_entrypoint_rewrite");
+
+  assert.ok(finding);
+  assert.equal(finding.severity, "error");
+  assert.equal(finding.path, packPath);
+  assert.match(finding.excerpt, /\+\d+ -\d+/);
+
+  const validation = await validateCandidateEcosystem({
+    spec,
+    run: { run_id: "run-destructive-capability-pack" },
+    actions: [acquire, { adapter: "candidate_ecosystem_diff", result: diff }]
+  });
+  const qualityFailure = validation.commands.find((command) => command.command === "candidate_quality");
+  assert.equal(validation.status, "attention");
+  assert.ok(qualityFailure);
+  assert.match(qualityFailure.stderr, /loop_engineering_capability_pack\.py/);
+  assert.equal(qualityFailure.diagnostic.failure_kind, "candidate_quality_failure");
+});
+
 test("semantic review rejects test-only candidates and scores reviewer evidence", async () => {
   const review = await semanticAlignmentReview({
     spec: { pack_config: { semantic_review: { minimum_validation_commands: 1 } } },
@@ -3815,6 +4020,58 @@ console.log(JSON.stringify({
   assert.equal(review.status, "failed");
   assert.equal(review.model_separation.status, "failed");
   assert.ok(review.blocking_reasons.some((reason) => reason.includes("Reviewer model must differ")));
+});
+
+test("semantic review allows same local Codex agent when distinct model is not required", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-review-codex-"));
+  const reviewCommand = join(home, "codex-reviewer.js");
+  await writeFile(reviewCommand, `#!/usr/bin/env node
+console.log(JSON.stringify({
+  schema_version: "across-host-review-decision/1.0",
+  status: "passed",
+  model_backed: true,
+  provider: "local-agent",
+  model: "codex",
+  decision_hash: "same-codex-review",
+  recommendation: "review",
+  merge_recommendation: "open_review_pr",
+  product_value_score: 92,
+  maintainability_score: 91,
+  risk_score: 8,
+  blocking_reasons: []
+}));
+`, "utf8");
+  const review = await semanticAlignmentReview({
+    spec: {
+      pack_config: {
+        semantic_review: {
+          minimum_validation_commands: 1,
+          require_distinct_model: false,
+          independent_reviewer_required: true
+        },
+        reviewer_model_policy: {
+          required: true,
+          agent_id: "codex",
+          provider: "local-agent",
+          model: "codex",
+          require_distinct_from_builder: false
+        }
+      }
+    },
+    actions: [
+      { adapter: "product_iteration_strategy", result: { selected_iteration: { target_id: "product", allowed_patch_paths: ["backend/src/across_agents_assistant/autopilot_product.py"] } } },
+      { adapter: "host_code_iteration", result: { model_backed: true, provider: "local-agent", model: "codex", summary: "Add product helper." } },
+      { adapter: "candidate_ecosystem_diff", result: { changed_files: ["across-agents-assistant/backend/src/across_agents_assistant/autopilot_product.py"], repos: [] } },
+      { adapter: "candidate_ecosystem_validation", result: { status: "passed", commands: [{ status: "passed" }, { status: "passed" }] } }
+    ],
+    env: { ...process.env, ACROSS_AAA_HOST_REVIEW_COMMAND: JSON.stringify(["node", reviewCommand]) }
+  });
+
+  assert.equal(review.status, "passed");
+  assert.equal(review.reviewer_independent, true);
+  assert.equal(review.model_separation.required, false);
+  assert.equal(review.model_separation.status, "not_required");
+  assert.equal(review.policy.distinct_model_required, false);
 });
 
 test("orchestrator dispatch failure preserves evidence and does not patch candidate", async () => {

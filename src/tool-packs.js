@@ -400,6 +400,36 @@ const TOOL_PACKS = Object.freeze([
     },
     model_role: "inspect evidence integrity gaps and decide whether review can proceed",
     deterministic_role: "hash evidence sections, chain audit events, and expose role separation"
+  },
+  {
+    id: "self_iteration_quality_snapshot",
+    title: "Self-Iteration Quality Snapshot",
+    capability_refs: ["runtime.evidence_integrity", "runtime.tool_pack_registry"],
+    owner: "across-autopilot",
+    boundary: "read_only_loop_state",
+    inputs: ["artifact_paths", "contract_paths", "timeline_tail", "tool_packs"],
+    outputs: ["quality_snapshot", "review_hints"],
+    input_schema: {
+      type: "object",
+      required: ["artifact_paths", "contract_paths"],
+      properties: {
+        artifact_paths: { type: "object" },
+        contract_paths: { type: "object" },
+        timeline_tail: { type: "array" },
+        tool_packs: { type: "array" }
+      }
+    },
+    output_schema: {
+      type: "object",
+      required: ["status", "tool_pack_status"],
+      properties: {
+        status: { enum: ["ready", "attention"] },
+        tool_pack_status: { type: "object" },
+        review_hints: { type: "array" }
+      }
+    },
+    model_role: "use deterministic loop-state evidence before trusting generated targets",
+    deterministic_role: "summarize artifacts, contracts, timelines, and Tool Pack readiness for review"
   }
 ]);
 
@@ -443,6 +473,7 @@ export function toolPackIdsForTarget(target) {
   if (text.includes("depend") || text.includes("security")) ids.add("dependency_security_review");
   if (text.includes("license")) ids.add("license_policy_scan");
   if (text.includes("contract") || text.includes("timeline") || text.includes("backlog")) ids.add("git_repo_inspection").add("source_research_digest");
+  if (text.includes("snapshot") || text.includes("quality")) ids.add("self_iteration_quality_snapshot");
   if (text.includes("review") || text.includes("quality") || text.includes("gate")) ids.add("independent_review").add("candidate_diff_quality");
   if (text.includes("diff") || text.includes("promotion") || text.includes("candidate")) ids.add("candidate_diff_quality").add("promotion_attestation");
   ids.add("validation_harness");

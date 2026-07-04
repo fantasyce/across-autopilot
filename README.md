@@ -71,9 +71,15 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.13`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.13` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.14`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.14` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.14` hardens autonomous self-iteration execution: the AAA self-iteration
+spec now routes research, builder, and reviewer roles through the local Codex
+agent, candidate app lifecycle validation rejects macOS socket paths before they
+can crash startup, empty optional LLM status no longer fails promotion, and loop
+state records self-iteration quality snapshots for future review.
 
 `v0.2.13` hardens autonomous self-iteration validation: AAA candidate
 workspaces now run an implicit top-level backend name smoke test, candidate
