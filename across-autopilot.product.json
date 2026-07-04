@@ -8,10 +8,10 @@
   "part_of": "Across",
   "repository": "fantasyce/across-autopilot",
   "current_release": {
-    "version": "v0.2.14",
+    "version": "v0.2.15",
     "published_at": "2026-07-05",
-    "tag": "v0.2.14",
-    "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.2.14"
+    "tag": "v0.2.15",
+    "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.2.15"
   },
   "role": "workflow supervisor",
   "hosts": [
