@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -16,6 +17,7 @@ import { buildToolPackRegistry } from "../src/tool-packs.js";
 import { buildRoleEvidence } from "../src/roles.js";
 
 const exec = promisify(execFile);
+const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 async function writeFakeCandidateAppLifecycleCommand(home) {
   const command = join(home, "fake-candidate-app-lifecycle.js");
@@ -138,6 +140,22 @@ test("candidate source defaults use source mirrors in product mode", async () =>
     process.chdir(previousCwd);
     restoreEnv(previousEnv);
     await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("AAA self-iteration URL sources are covered by the network allowlist", async () => {
+  for (const specName of ["aaa-autonomous-self-iteration.loop.json", "aaa-research-driven-self-iteration.loop.json"]) {
+    const spec = JSON.parse(await readFile(join(repoRoot, "examples", specName), "utf8"));
+    const allowlist = new Set(spec.actions?.network_policy?.allowlist || []);
+    const sources = collectUrlSources(spec.sources);
+    assert.ok(sources.length > 0, `${specName} should declare URL sources`);
+    if (!allowlist.size) continue;
+    for (const source of sources) {
+      for (const url of [source.url, ...(source.fallback_urls || []), ...(source.fallbackUrls || [])].filter(Boolean)) {
+        const hostname = new URL(url).hostname;
+        assert.ok(allowlist.has(hostname), `${specName} network allowlist must include ${hostname}`);
+      }
+    }
   }
 });
 
@@ -4356,6 +4374,14 @@ async function fileExists(path) {
     if (error.code === "ENOENT") return false;
     throw error;
   }
+}
+
+function collectUrlSources(value) {
+  const sources = [];
+  for (const item of Array.isArray(value) ? value : []) {
+    if (item?.adapter === "url" || item?.type === "url") sources.push(item);
+  }
+  return sources;
 }
 
 function snapshotEnv(keys) {

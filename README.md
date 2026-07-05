@@ -71,9 +71,13 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.16`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.16` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.17`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.17` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.17` makes autonomous self-iteration source intake more reliable by using
+Node-fetchable OpenAI Agents SDK GitHub README sources and by testing that
+source and fallback hosts stay covered by each LoopSpec network allowlist.
 
 `v0.2.16` hardens autonomous self-iteration source intake by retrying transient
 URL failures, extending default source timeouts, supporting fallback URLs, and
