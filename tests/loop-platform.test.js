@@ -205,6 +205,68 @@ test("url source adapter times out stalled fetches", async () => {
   }
 });
 
+test("url source adapter retries transient HTTP failures", async () => {
+  const registry = new AdapterRegistry();
+  registerBuiltIns(registry);
+  const adapter = registry.getSource("url");
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (_url, _options = {}) => {
+    calls += 1;
+    if (calls === 1) {
+      return new Response("blocked", { status: 403 });
+    }
+    return new Response("research signal", { status: 200 });
+  };
+  try {
+    const action = await adapter.run({
+      spec: { id: "url-retry-test" },
+      source: { id: "transient", url: "https://example.test/source", timeout_ms: 1000, retries: 1 },
+      run: {}
+    });
+    assert.equal(action.status, "passed");
+    assert.equal(action.result.status_code, 200);
+    assert.equal(action.result.excerpt, "research signal");
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("url source adapter can use fallback urls", async () => {
+  const registry = new AdapterRegistry();
+  registerBuiltIns(registry);
+  const adapter = registry.getSource("url");
+  const originalFetch = globalThis.fetch;
+  const urls = [];
+  globalThis.fetch = async (url, _options = {}) => {
+    urls.push(String(url));
+    if (String(url).includes("primary")) {
+      return new Response("not found", { status: 404 });
+    }
+    return new Response("fallback signal", { status: 200 });
+  };
+  try {
+    const action = await adapter.run({
+      spec: { id: "url-fallback-test" },
+      source: {
+        id: "fallback-source",
+        url: "https://example.test/primary",
+        fallback_urls: ["https://example.test/fallback"],
+        timeout_ms: 1000,
+        retries: 0
+      },
+      run: {}
+    });
+    assert.equal(action.status, "passed");
+    assert.equal(action.result.url, "https://example.test/fallback");
+    assert.equal(action.result.excerpt, "fallback signal");
+    assert.deepEqual(urls, ["https://example.test/primary", "https://example.test/fallback"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("candidate ecosystem receives a non-secret host model lease", async () => {
   const home = await mkdtemp(join(tmpdir(), "across-autopilot-model-lease-"));
   const sourcesRoot = join(home, "sources");

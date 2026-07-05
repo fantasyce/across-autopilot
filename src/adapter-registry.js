@@ -24,6 +24,8 @@ import { renderWorkflowPackHostExports, workflowPackForLoopSpec } from "./workfl
 import { renderTriggerPayloadSource } from "./platform-self-repair.js";
 
 const exec = promisify(execFile);
+const DEFAULT_URL_SOURCE_TIMEOUT_MS = 30_000;
+const DEFAULT_URL_SOURCE_ATTEMPTS = 2;
 
 export class AdapterRegistry {
   constructor({ orchestratorClient = null, contextClient = null, store = null } = {}) {
@@ -163,16 +165,16 @@ async function runSource(id, source, spec, run) {
       return { kind: id, root, files: await directoryRecords(root, Number(source.max_files || 120)) };
     }
     if (id === "github_repo" && source.url) return cloneGitRepository(source, run);
-    if (source.url) return fetchUrlRecord(source.url, { kind: id, timeoutMs: sourceTimeoutMs(source) });
+    if (source.url) return fetchUrlRecord(source.url, sourceFetchOptions(source, id));
   }
   if (id === "github_search") {
     const fixtures = asArray(source.repositories || source.fixtures);
     if (fixtures.length) return { kind: "github_search", query: source.query || "", repositories: fixtures.map(normalizeFixtureSource) };
-    return fetchUrlRecord(source.url || `https://api.github.com/search/repositories?q=${encodeURIComponent(source.query || "topic:mcp")}`, { kind: id, timeoutMs: sourceTimeoutMs(source) });
+    return fetchUrlRecord(source.url || `https://api.github.com/search/repositories?q=${encodeURIComponent(source.query || "topic:mcp")}`, sourceFetchOptions(source, id));
   }
   if (id === "rss" || id === "url") {
     if (source.path) return textRecord(resolvePath(source.path, process.cwd()), await readFile(resolvePath(source.path, process.cwd()), "utf8"));
-    return fetchUrlRecord(source.url, { kind: id, timeoutMs: sourceTimeoutMs(source) });
+    return fetchUrlRecord(source.url, sourceFetchOptions(source, id));
   }
   return { kind: id, source };
 }
@@ -1081,14 +1083,36 @@ function shouldReadSourceExcerpt(rel) {
 }
 
 async function fetchUrlRecord(url, extra = {}) {
-  if (!url) throw new LoopFailure({ code: FAILURE_CODES.SOURCE_UNREACHABLE, failedState: "discovering_sources", message: "Source URL is missing." });
-  const timeoutMs = Number(extra.timeoutMs || extra.timeout_ms || 15_000);
+  const urls = [url, ...asArray(extra.fallbackUrls || extra.fallback_urls)].map((item) => String(item || "").trim()).filter(Boolean);
+  if (!urls.length) throw new LoopFailure({ code: FAILURE_CODES.SOURCE_UNREACHABLE, failedState: "discovering_sources", message: "Source URL is missing." });
+  const timeoutMs = Number(extra.timeoutMs || extra.timeout_ms || DEFAULT_URL_SOURCE_TIMEOUT_MS);
+  const attempts = urlSourceAttempts(extra);
+  let lastError = null;
+  for (const candidateUrl of urls) {
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        return await fetchUrlRecordOnce(candidateUrl, extra, { timeoutMs, attempt, attempts });
+      } catch (error) {
+        lastError = error;
+        if (!isRetryableSourceError(error) || attempt >= attempts) break;
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, Math.min(250 * attempt, 1000)));
+      }
+    }
+  }
+  throw lastError || new LoopFailure({ code: FAILURE_CODES.SOURCE_UNREACHABLE, failedState: "discovering_sources", message: "Source request failed." });
+}
+
+async function fetchUrlRecordOnce(url, extra = {}, { timeoutMs, attempt, attempts } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
   let response;
   try {
     response = await fetch(url, {
-      headers: { "User-Agent": "AcrossAutopilot/1.0" },
+      headers: {
+        "User-Agent": "AcrossAutopilot/1.0 (+https://github.com/fantasyce/across-autopilot)",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,text/markdown,text/plain;q=0.8,*/*;q=0.5",
+        "Accept-Language": "en-US,en;q=0.8"
+      },
       signal: controller.signal
     });
   } catch (error) {
@@ -1096,23 +1120,52 @@ async function fetchUrlRecord(url, extra = {}) {
     throw new LoopFailure({
       code: FAILURE_CODES.SOURCE_UNREACHABLE,
       failedState: "discovering_sources",
-      message: timedOut ? `Source request timed out after ${timeoutMs}ms.` : `Source request failed: ${String(error?.message || error).slice(0, 200)}.`,
+      message: timedOut
+        ? `Source request timed out after ${timeoutMs}ms (attempt ${attempt || 1}/${attempts || 1}).`
+        : `Source request failed: ${String(error?.message || error).slice(0, 200)}.`,
       retryable: true
     });
   } finally {
     clearTimeout(timer);
   }
   if (!response.ok) {
-    throw new LoopFailure({ code: response.status === 429 ? FAILURE_CODES.SOURCE_RATE_LIMITED : FAILURE_CODES.SOURCE_UNREACHABLE, failedState: "discovering_sources", message: `Source request failed with ${response.status}.` });
+    const retryable = response.status === 403 || response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500;
+    throw new LoopFailure({
+      code: response.status === 429 ? FAILURE_CODES.SOURCE_RATE_LIMITED : FAILURE_CODES.SOURCE_UNREACHABLE,
+      failedState: "discovering_sources",
+      message: `Source request failed with ${response.status} (attempt ${attempt || 1}/${attempts || 1}).`,
+      retryable
+    });
   }
   const text = await response.text();
   return { ...extra, url, status_code: response.status, sha256: sha256(text), title: basename(url), excerpt: text.slice(0, 500) };
 }
 
+function sourceFetchOptions(source, kind) {
+  return {
+    kind,
+    timeoutMs: sourceTimeoutMs(source),
+    fallbackUrls: source?.fallback_urls || source?.fallbackUrls,
+    retries: source?.retries ?? source?.retry_count ?? source?.retryCount
+  };
+}
+
 function sourceTimeoutMs(source) {
-  const value = Number(source?.timeout_ms ?? source?.timeoutMs ?? 15_000);
-  if (!Number.isFinite(value) || value <= 0) return 15_000;
-  return Math.max(100, Math.min(value, 60_000));
+  const value = Number(source?.timeout_ms ?? source?.timeoutMs ?? DEFAULT_URL_SOURCE_TIMEOUT_MS);
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_URL_SOURCE_TIMEOUT_MS;
+  return Math.max(100, Math.min(value, 120_000));
+}
+
+function urlSourceAttempts(extra = {}) {
+  const explicit = extra.retries ?? extra.retry_count ?? extra.retryCount;
+  if (explicit === 0) return 1;
+  const retries = Number(explicit ?? DEFAULT_URL_SOURCE_ATTEMPTS - 1);
+  if (!Number.isFinite(retries) || retries < 0) return DEFAULT_URL_SOURCE_ATTEMPTS;
+  return Math.max(1, Math.min(Math.floor(retries) + 1, 5));
+}
+
+function isRetryableSourceError(error) {
+  return Boolean(error?.retryable);
 }
 
 function textRecord(path, text) {

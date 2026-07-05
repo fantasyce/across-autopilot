@@ -59,7 +59,10 @@
       "type": "url",
       "adapter": "url",
       "title": "OpenAI Agents SDK architecture signal",
-      "url": "https://developers.openai.com/api/docs/guides/agents"
+      "url": "https://developers.openai.com/api/docs/guides/agents",
+      "fallback_urls": ["https://platform.openai.com/docs/guides/agents"],
+      "timeout_ms": 30000,
+      "retries": 1
     },
     {
       "id": "mcp-tooling-architecture-signal",
@@ -73,7 +76,10 @@
       "type": "url",
       "adapter": "url",
       "title": "Agent2Agent interoperability signal",
-      "url": "https://github.com/a2aproject/A2A"
+      "url": "https://raw.githubusercontent.com/a2aproject/A2A/main/README.md",
+      "fallback_urls": ["https://github.com/a2aproject/A2A"],
+      "timeout_ms": 45000,
+      "retries": 1
     }
   ],
   "actions": {
