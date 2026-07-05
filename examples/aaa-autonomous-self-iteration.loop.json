@@ -59,8 +59,11 @@
       "type": "url",
       "adapter": "url",
       "title": "OpenAI Agents SDK architecture signal",
-      "url": "https://developers.openai.com/api/docs/guides/agents",
-      "fallback_urls": ["https://platform.openai.com/docs/guides/agents"],
+      "url": "https://raw.githubusercontent.com/openai/openai-agents-python/main/README.md",
+      "fallback_urls": [
+        "https://raw.githubusercontent.com/openai/openai-agents-js/main/README.md",
+        "https://developers.openai.com/api/docs/guides/agents"
+      ],
       "timeout_ms": 30000,
       "retries": 1
     },
@@ -219,6 +222,7 @@
       "mode": "adapter_scoped",
       "allowlist": [
         "developers.openai.com",
+        "raw.githubusercontent.com",
         "modelcontextprotocol.io",
         "github.com"
       ]
