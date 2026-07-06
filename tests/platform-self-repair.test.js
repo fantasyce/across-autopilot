@@ -273,3 +273,82 @@ test("candidate validation tracebacks are not upgraded by later app lifecycle fa
   assert.equal(diagnosis.category, "candidate_code_failure");
   assert.equal(diagnosis.target_id, null);
 });
+
+test("host local-agent timeouts route to AAA runtime repair", () => {
+  const diagnosis = diagnosePlatformSelfRepair({
+    spec: {
+      id: "aaa-autonomous-self-iteration",
+      failure_policy: { platform_self_repair: { enabled: true } }
+    },
+    failedRun: {
+      run_id: "run-host-code-timeout",
+      spec_id: "aaa-autonomous-self-iteration",
+      trigger_event: { payload: { auto_platform_self_repair: true } },
+      failure: {
+        code: "adapter.timeout",
+        adapter_id: "host_code_iteration",
+        message: "Action host_code_iteration exceeded runtime timeout 900000ms."
+      }
+    },
+    evidence: {
+      actions: [
+        {
+          adapter: "product_iteration_strategy",
+          status: "passed",
+          result: { summary: "Use a safe timeout-recovery target for autonomous self-iteration." }
+        },
+        {
+          adapter: "host_code_iteration",
+          status: "failed",
+          failure: {
+            code: "adapter.timeout",
+            message: "Action host_code_iteration exceeded runtime timeout 900000ms."
+          }
+        }
+      ],
+      gates: [{ id: "adapter.timeout", status: "failed" }]
+    }
+  });
+
+  assert.equal(diagnosis.eligible, true);
+  assert.equal(diagnosis.category, "runtime_gap");
+  assert.equal(diagnosis.target_id, "aaa-host-runtime-repair");
+  assert.equal(diagnosis.target_repo, "across-agents-assistant");
+  assert.equal(diagnosis.trigger_payload.failure_category, "runtime_gap");
+});
+
+test("research decision command timeouts route to AAA runtime repair", () => {
+  const diagnosis = diagnosePlatformSelfRepair({
+    spec: {
+      id: "aaa-autonomous-self-iteration",
+      failure_policy: { platform_self_repair: { enabled: true } }
+    },
+    failedRun: {
+      run_id: "run-research-timeout",
+      spec_id: "aaa-autonomous-self-iteration",
+      trigger_event: { payload: { auto_platform_self_repair: true } },
+      failure: {
+        code: "adapter.timeout",
+        adapter_id: "product_iteration_strategy",
+        message: "Command timed out; command='/Applications/Across Agents Assistant.app/Contents/Resources/backend/backend' autopilot-research-decision --request-json '{...}'; signal=SIGTERM"
+      }
+    },
+    evidence: {
+      actions: [
+        {
+          adapter: "product_iteration_strategy",
+          status: "failed",
+          failure: {
+            code: "adapter.timeout",
+            message: "Command timed out; command='autopilot-research-decision --request-json {...}'; signal=SIGTERM"
+          }
+        }
+      ],
+      gates: []
+    }
+  });
+
+  assert.equal(diagnosis.eligible, true);
+  assert.equal(diagnosis.category, "runtime_gap");
+  assert.equal(diagnosis.target_id, "aaa-host-runtime-repair");
+});

@@ -901,7 +901,7 @@ function normalizeModelOverrides(overrides) {
 function normalizeRoleModelOverride(value) {
   if (!value || typeof value !== "object") return null;
   const normalized = {};
-  for (const key of ["agent_id", "agent", "provider", "provider_id", "model", "model_id", "temperature", "max_tokens", "timeout_ms", "role", "required", "require_distinct_from_builder"]) {
+  for (const key of ["agent_id", "agent", "provider", "provider_id", "model", "model_id", "fallback_models", "temperature", "max_tokens", "timeout_ms", "role", "required", "require_distinct_from_builder"]) {
     if (value[key] !== undefined && value[key] !== null && String(value[key]).trim() !== "") {
       normalized[key] = value[key];
     }

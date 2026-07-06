@@ -174,6 +174,9 @@ function selfRepairDisabledReason(spec, failedRun, triggerItem) {
 function classifyObservedSignals(observed) {
   const text = observed.map((item) => `${item.kind || ""} ${item.code || ""} ${item.adapter_id || ""} ${item.text || ""}`).join("\n").toLowerCase();
   if (!text.trim()) return "unknown";
+  if (hostAgentTimeoutSignal(text)) {
+    return "runtime_gap";
+  }
   if (/(source\.unreachable|source\.rate_limited|context\.unavailable|network|timeout|rate limit|dns|provider|api key|credential)/.test(text)) {
     return "infrastructure_failure";
   }
@@ -221,6 +224,11 @@ function classifyObservedSignals(observed) {
     return "model_output_failure";
   }
   return "unknown";
+}
+
+function hostAgentTimeoutSignal(text) {
+  return /(adapter\.timeout|timed out|timeout)/.test(text)
+    && /(host_code_iteration|product_iteration_strategy|autopilot-code-iteration|autopilot-research-decision|host model|local agent|codex)/.test(text);
 }
 
 function candidateValidationStoppedBadCandidate(observed) {
