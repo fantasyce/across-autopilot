@@ -3060,6 +3060,84 @@ console.log(JSON.stringify({
   }
 });
 
+test("platform self-repair trigger target bypasses host research command", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-platform-trigger-target-"));
+  const autopilotRepo = join(home, "candidate", "across-autopilot");
+  await mkdir(join(autopilotRepo, "tests"), { recursive: true });
+  const commandPath = join(home, "host-research-should-not-run.js");
+  await writeFile(commandPath, `#!/usr/bin/env node
+throw new Error("host research command should not run for explicit trigger target");
+`, "utf8");
+
+  const previousEnv = snapshotEnv(["ACROSS_AAA_HOST_RESEARCH_COMMAND", "ACROSS_HOME"]);
+  Object.assign(process.env, {
+    ACROSS_AAA_HOST_RESEARCH_COMMAND: JSON.stringify(["node", commandPath]),
+    ACROSS_HOME: home
+  });
+  try {
+    const strategy = await runProductIterationStrategy({
+      spec: {
+        id: "aaa-platform-self-repair",
+        name: "AAA Platform Self Repair",
+        pack_config: {
+          target_repo: "across-autopilot",
+          research_strategy: {
+            deterministic_trigger_target: true,
+            candidate_targets: [{
+              id: "aaa-host-runtime-repair",
+              target_repo: "across-agents-assistant",
+              goal: "Repair host runtime timeout policy.",
+              allowed_patch_paths: [
+                "backend/src/across_agents_assistant/api_server.py",
+                "backend/tests/test_api_autopilot.py"
+              ],
+              context_files: ["backend/src/across_agents_assistant/api_server.py"],
+              validation_commands: [
+                { repo: "across-agents-assistant", command: "python3", args: ["-m", "py_compile", "backend/src/across_agents_assistant/api_server.py"] },
+                { repo: "across-agents-assistant", command: "python3", args: ["-m", "pytest", "backend/tests/test_api_autopilot.py", "-q"] }
+              ],
+              semantic_review: { minimum_validation_commands: 2 },
+              tool_packs: ["host_runtime_replay"],
+              risk: "high",
+              score: 90
+            }]
+          }
+        }
+      },
+      run: {
+        run_id: "run-platform-trigger-target",
+        trigger_event: {
+          payload: {
+            target_id: "aaa-host-runtime-repair",
+            target_repo: "across-agents-assistant"
+          }
+        }
+      },
+      sources: [],
+      actions: [{
+        adapter: "candidate_ecosystem_acquire",
+        result: {
+          candidate_id: "candidate-platform-trigger-target",
+          repos: [{ id: "across-autopilot", target: autopilotRepo, source: autopilotRepo }],
+          four_repo_manifest: true
+        }
+      }],
+      recalledMemory: [],
+      env: process.env
+    });
+
+    assert.equal(strategy.status, "passed");
+    assert.equal(strategy.deterministic_trigger_target, true);
+    assert.equal(strategy.model_backed, false);
+    assert.equal(strategy.provider, "deterministic");
+    assert.equal(strategy.selected_target_id, "aaa-host-runtime-repair");
+    assert.equal(strategy.selected_iteration.target_repo, "across-agents-assistant");
+  } finally {
+    restoreEnv(previousEnv);
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("research strategy gate accepts admitted fallback target after deferred decision", () => {
   const [passed, reason] = ecosystemGateStatus("research_iteration_strategy_ready", {
     actions: [

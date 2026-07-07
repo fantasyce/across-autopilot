@@ -1,11 +1,9 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { FAILURE_CODES } from "./failures.js";
 import { ecosystemBinDir } from "./paths.js";
 
-const exec = promisify(execFile);
 const COMMAND_ARG_LIMIT = 180;
 const DIAGNOSTIC_TEXT_LIMIT = 4000;
 const MODEL_SECRET_ENV_NAMES = new Set([
@@ -40,10 +38,12 @@ export async function runJsonCommand(command, args = [], options = {}) {
   const env = sanitizedSubprocessEnv(options.env || process.env);
   const commandSummary = commandForDiagnostics(bin, finalArgs);
   try {
-    const { stdout, stderr } = await exec(bin, finalArgs, {
+    const { stdout, stderr } = await runCommandWithActivityTimeout(bin, finalArgs, {
       env,
       cwd: options.cwd || process.cwd(),
-      timeout: options.timeoutMs || 60_000,
+      timeoutMs: options.timeoutMs || 60_000,
+      idleTimeoutMs: options.idleTimeoutMs || options.timeout_policy?.idle_timeout_ms,
+      maxWallTimeoutMs: options.maxWallTimeoutMs || options.timeout_policy?.max_wall_timeout_ms,
       maxBuffer: options.maxBuffer || 10 * 1024 * 1024
     });
     const text = stdout.trim();
@@ -51,6 +51,96 @@ export async function runJsonCommand(command, args = [], options = {}) {
   } catch (error) {
     throw enrichCommandError(error, { commandSummary });
   }
+}
+
+function runCommandWithActivityTimeout(bin, args, options = {}) {
+  const maxBuffer = Number(options.maxBuffer || 10 * 1024 * 1024);
+  const fallbackTimeoutMs = Number(options.timeoutMs || 60_000);
+  const maxWallTimeoutMs = positiveNumber(options.maxWallTimeoutMs, fallbackTimeoutMs);
+  const idleTimeoutMs = positiveNumber(options.idleTimeoutMs, fallbackTimeoutMs);
+  return new Promise((resolvePromise, rejectPromise) => {
+    const stdout = [];
+    const stderr = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let settled = false;
+    let timeoutKind = null;
+    const startedAt = Date.now();
+    let lastActivityAt = startedAt;
+    const child = spawn(bin, args, {
+      env: options.env || process.env,
+      cwd: options.cwd || process.cwd(),
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+
+    const finish = (error, result = null) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(timer);
+      if (error) rejectPromise(error);
+      else resolvePromise(result);
+    };
+    const killForTimeout = (kind) => {
+      if (timeoutKind || settled) return;
+      timeoutKind = kind;
+      child.kill("SIGTERM");
+      setTimeout(() => {
+        if (!settled) child.kill("SIGKILL");
+      }, 2_000).unref();
+    };
+    const timer = setInterval(() => {
+      const now = Date.now();
+      if (maxWallTimeoutMs > 0 && now - startedAt > maxWallTimeoutMs) {
+        killForTimeout("max_wall_timeout");
+      } else if (idleTimeoutMs > 0 && now - lastActivityAt > idleTimeoutMs) {
+        killForTimeout("idle_timeout");
+      }
+    }, 250);
+    timer.unref();
+
+    child.stdout.on("data", (chunk) => {
+      lastActivityAt = Date.now();
+      stdoutBytes += chunk.length;
+      if (stdoutBytes <= maxBuffer) stdout.push(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      lastActivityAt = Date.now();
+      stderrBytes += chunk.length;
+      if (stderrBytes <= maxBuffer) stderr.push(chunk);
+    });
+    child.on("error", (error) => finish(error));
+    child.on("close", (code, signal) => {
+      const stdoutText = Buffer.concat(stdout).toString("utf8");
+      const stderrText = Buffer.concat(stderr).toString("utf8");
+      if (timeoutKind) {
+        const timeoutMs = timeoutKind === "idle_timeout" ? idleTimeoutMs : maxWallTimeoutMs;
+        const error = new Error(`Command ${timeoutKind} after ${timeoutMs}ms`);
+        error.code = "ETIMEDOUT";
+        error.timeout_kind = timeoutKind;
+        error.timeout_ms = timeoutMs;
+        error.signal = signal || "SIGTERM";
+        error.stdout = stdoutText;
+        error.stderr = stderrText;
+        finish(error);
+        return;
+      }
+      if (code !== 0) {
+        const error = new Error(`${bin} exited with ${code ?? signal}`);
+        error.code = code;
+        error.signal = signal;
+        error.stdout = stdoutText;
+        error.stderr = stderrText;
+        finish(error);
+        return;
+      }
+      finish(null, { stdout: stdoutText, stderr: stderrText });
+    });
+  });
+}
+
+function positiveNumber(value, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : Number(fallback || 0);
 }
 
 function parseJsonCommandOutput(text, { commandSummary, stderr = "" }) {
@@ -89,6 +179,8 @@ function enrichCommandError(error, { commandSummary }) {
 
   error.exit_code = typeof exitCode === "number" ? exitCode : null;
   error.signal = error?.signal || null;
+  error.timeout_kind = error?.timeout_kind || null;
+  error.timeout_ms = error?.timeout_ms || null;
   error.command = commandSummary;
   error.stdout = stdout;
   error.stderr = stderr;
@@ -98,6 +190,8 @@ function enrichCommandError(error, { commandSummary }) {
     `command=${commandSummary}`,
     error.exit_code !== null ? `exit_code=${error.exit_code}` : null,
     error.signal ? `signal=${error.signal}` : null,
+    error.timeout_kind ? `timeout_kind=${error.timeout_kind}` : null,
+    error.timeout_ms ? `timeout_ms=${error.timeout_ms}` : null,
     stderr ? `stderr=${stderr}` : null,
     stdout ? `stdout=${stdout}` : null
   ].filter(Boolean).join("; ");
@@ -106,6 +200,8 @@ function enrichCommandError(error, { commandSummary }) {
     command: commandSummary,
     exit_code: error.exit_code,
     signal: error.signal,
+    timeout_kind: error.timeout_kind,
+    timeout_ms: error.timeout_ms,
     stdout,
     stderr,
     structured_output: structured || null

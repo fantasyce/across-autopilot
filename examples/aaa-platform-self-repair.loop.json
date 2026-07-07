@@ -167,13 +167,13 @@
     "network": "adapter_scoped",
     "env": "minimal"
   },
-  "runtime_policy": {
-    "risk_profile": "high",
-    "timeouts": {
-      "total_run_timeout_ms": 1200000,
-      "adapter_timeout_ms": 300000,
-      "model_timeout_ms": 300000
-    },
+    "runtime_policy": {
+      "risk_profile": "high",
+      "timeouts": {
+        "total_run_timeout_ms": 2400000,
+        "adapter_timeout_ms": 1200000,
+        "model_timeout_ms": 1200000
+      },
     "budget": {
       "max_model_calls": 12,
       "max_candidate_repairs": 3,
@@ -242,7 +242,10 @@
     },
     "research_strategy": {
       "goal": "Read the failed loop trigger payload and choose the platform repair target that matches target_id first, then failure_category and target_repo. If the trigger payload includes target_id, select the target_catalog item with that id unless the payload evidence explicitly contradicts it. If the trigger payload includes target_repo, select a target_catalog item with the same target_repo unless the payload evidence explicitly contradicts it. Generate a bounded repair plan that fixes the platform layer generally, includes a regression test or replay fixture, and keeps promotion human-approved.",
-      "timeout_ms": 240000,
+      "deterministic_trigger_target": true,
+      "timeout_ms": 900000,
+      "idle_timeout_ms": 300000,
+      "max_wall_timeout_ms": 900000,
       "candidate_targets": [
         {
           "id": "autopilot-self-repair-replay-fixture",
@@ -335,40 +338,58 @@
       ]
     },
     "code_iteration": {
-      "timeout_ms": 300000
+      "timeout_ms": 1200000,
+      "idle_timeout_ms": 300000,
+      "max_wall_timeout_ms": 1200000
     },
     "model_policy": {
       "required": true,
       "agent_id": "codex",
       "provider": "local-agent",
-      "model": "codex",
+      "model": "gpt-5.5",
+      "fallback_models": ["gpt-5.4", "gpt-5.4-mini"],
       "direct_patches": true,
       "temperature": 0.2,
-      "max_tokens": 8192
+      "max_tokens": 8192,
+      "timeout_ms": 900000,
+      "idle_timeout_ms": 300000,
+      "max_wall_timeout_ms": 900000
     },
     "research_model_policy": {
       "agent_id": "codex",
       "provider": "local-agent",
-      "model": "codex",
+      "model": "gpt-5.5",
+      "fallback_models": ["gpt-5.4", "gpt-5.4-mini"],
       "temperature": 0.2,
-      "max_tokens": 8192
+      "max_tokens": 8192,
+      "timeout_ms": 900000,
+      "idle_timeout_ms": 300000,
+      "max_wall_timeout_ms": 900000
     },
     "builder_model_policy": {
       "agent_id": "codex",
       "provider": "local-agent",
-      "model": "codex",
+      "model": "gpt-5.5",
+      "fallback_models": ["gpt-5.4", "gpt-5.4-mini"],
       "direct_patches": true,
       "allow_host_validation_repair_fallback": true,
       "temperature": 0.2,
-      "max_tokens": 8192
+      "max_tokens": 8192,
+      "timeout_ms": 900000,
+      "idle_timeout_ms": 300000,
+      "max_wall_timeout_ms": 900000
     },
     "reviewer_model_policy": {
       "required": true,
       "agent_id": "codex",
       "provider": "local-agent",
-      "model": "codex",
+      "model": "gpt-5.4-mini",
+      "fallback_models": ["gpt-5.4", "gpt-5.5"],
       "temperature": 0.0,
       "max_tokens": 4096,
+      "timeout_ms": 900000,
+      "idle_timeout_ms": 300000,
+      "max_wall_timeout_ms": 900000,
       "require_distinct_from_builder": false
     }
   }
