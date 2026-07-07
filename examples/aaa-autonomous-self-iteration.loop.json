@@ -206,13 +206,13 @@
     "network": "adapter_scoped",
     "env": "minimal"
   },
-  "runtime_policy": {
-    "risk_profile": "high",
-    "timeouts": {
-      "total_run_timeout_ms": 3600000,
-      "adapter_timeout_ms": 900000,
-      "model_timeout_ms": 900000
-    },
+    "runtime_policy": {
+      "risk_profile": "high",
+      "timeouts": {
+        "total_run_timeout_ms": 3600000,
+        "adapter_timeout_ms": 1800000,
+        "model_timeout_ms": 1800000
+      },
     "budget": {
       "max_model_calls": 12,
       "max_candidate_repairs": 3,
@@ -292,7 +292,9 @@
       "allow_model_generated_targets": true,
       "minimum_candidates": 3,
       "goal": "Research current AI agent and LLM application architecture trends, including agent handoffs, guardrails, tool protocols, external capability registries, interoperability protocols, context engineering, observability, and human-in-the-loop review. Compare those trends against AAA, Autopilot, Orchestrator, and Context; identify one bounded architecture or capability that can be safely absorbed into the Across ecosystem; implement it only in B; validate it; and stop for independent review plus human promotion.",
-      "timeout_ms": 480000,
+      "timeout_ms": 1200000,
+      "idle_timeout_ms": 300000,
+      "max_wall_timeout_ms": 1200000,
       "product_context": {
         "ecosystem": ["across-agents-assistant", "across-orchestrator", "across-context", "across-autopilot"],
         "stable_controller": "AAA",
@@ -309,7 +311,9 @@
       }
     },
     "code_iteration": {
-      "timeout_ms": 840000
+      "timeout_ms": 1500000,
+      "idle_timeout_ms": 300000,
+      "max_wall_timeout_ms": 1500000
     },
     "semantic_review": {
       "independent_reviewer_required": true,
@@ -319,41 +323,50 @@
       "required": true,
       "agent_id": "codex",
       "provider": "local-agent",
-      "model": "codex",
-      "fallback_models": ["gpt-5.4-mini", "gpt-5-codex"],
+      "model": "gpt-5.5",
+      "fallback_models": ["gpt-5.4", "gpt-5.4-mini"],
       "direct_patches": true,
       "temperature": 0.2,
       "max_tokens": 8192,
-      "timeout_ms": 240000
+      "timeout_ms": 900000,
+      "idle_timeout_ms": 300000,
+      "max_wall_timeout_ms": 900000
     },
     "research_model_policy": {
       "agent_id": "codex",
       "provider": "local-agent",
-      "model": "codex",
+      "model": "gpt-5.5",
+      "fallback_models": ["gpt-5.4", "gpt-5.4-mini"],
       "temperature": 0.2,
       "max_tokens": 8192,
-      "timeout_ms": 360000
+      "timeout_ms": 900000,
+      "idle_timeout_ms": 300000,
+      "max_wall_timeout_ms": 900000
     },
     "builder_model_policy": {
       "agent_id": "codex",
       "provider": "local-agent",
-      "model": "codex",
-      "fallback_models": ["gpt-5.4-mini", "gpt-5-codex"],
+      "model": "gpt-5.5",
+      "fallback_models": ["gpt-5.4", "gpt-5.4-mini"],
       "direct_patches": true,
       "allow_host_validation_repair_fallback": true,
       "temperature": 0.2,
       "max_tokens": 8192,
-      "timeout_ms": 240000
+      "timeout_ms": 900000,
+      "idle_timeout_ms": 300000,
+      "max_wall_timeout_ms": 900000
     },
     "reviewer_model_policy": {
       "required": true,
       "agent_id": "codex",
       "provider": "local-agent",
-      "model": "codex",
-      "fallback_models": ["gpt-5.4-mini", "gpt-5-codex"],
+      "model": "gpt-5.4-mini",
+      "fallback_models": ["gpt-5.4", "gpt-5.5"],
       "temperature": 0.0,
       "max_tokens": 4096,
-      "timeout_ms": 240000,
+      "timeout_ms": 900000,
+      "idle_timeout_ms": 300000,
+      "max_wall_timeout_ms": 900000,
       "require_distinct_from_builder": false
     }
   }

@@ -401,6 +401,32 @@ function modelIdentity(provider, model) {
   };
 }
 
+function commandTimeoutPolicy(configs, fallbackMs) {
+  const merged = Object.assign({}, ...asArray(configs).filter((item) => item && typeof item === "object"));
+  const legacyTimeout = positiveInt(merged.timeout_ms ?? merged.timeoutMs, fallbackMs);
+  const maxWallTimeoutMs = positiveInt(
+    merged.max_wall_timeout_ms ?? merged.maxWallTimeoutMs ?? merged.absolute_timeout_ms ?? merged.absoluteTimeoutMs,
+    legacyTimeout
+  );
+  const idleTimeoutMs = Math.min(
+    positiveInt(
+      merged.idle_timeout_ms ?? merged.idleTimeoutMs ?? merged.activity_timeout_ms ?? merged.activityTimeoutMs ?? merged.no_progress_timeout_ms ?? merged.noProgressTimeoutMs,
+      legacyTimeout
+    ),
+    maxWallTimeoutMs
+  );
+  return {
+    timeoutMs: maxWallTimeoutMs,
+    maxWallTimeoutMs,
+    idleTimeoutMs
+  };
+}
+
+function positiveInt(value, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : Number(fallback || 0);
+}
+
 export function candidateConfig(spec, run = null, env = process.env) {
   const declared = spec.pack_config?.candidate_ecosystem || {};
   const runCandidateId = run?.run_id ? String(run.run_id).replace(/^run-/, "") : "";
@@ -572,10 +598,14 @@ export async function runHostCodeIteration({ spec, run, actions, env = process.e
     spec,
     validationFeedback: request.validation_feedback
   });
+  const timeoutPolicy = commandTimeoutPolicy([
+    request.model_policy,
+    spec.pack_config?.code_iteration
+  ], 240_000);
   const response = await runJsonCommand(command, ["--request-json", JSON.stringify(request)], {
     env,
     cwd: repo.target,
-    timeoutMs: Number(spec.pack_config?.code_iteration?.timeout_ms || 240_000),
+    ...timeoutPolicy,
     maxBuffer: 10 * 1024 * 1024
   });
   const patches = asArray(response.patches);
@@ -678,10 +708,15 @@ export async function runProductIterationStrategy({ spec, run, sources, actions,
     candidate_model_lease: requestCandidateModelLease(acquire?.model_lease),
     model_policy: modelPolicyForRole(spec, "research")
   };
-  const response = await runJsonCommand(command, ["--request-json", JSON.stringify(request)], {
+  const deterministicResponse = deterministicStrategyResponseFromTrigger({ spec, run, targetCatalog });
+  const timeoutPolicy = commandTimeoutPolicy([
+    request.model_policy,
+    spec.pack_config?.research_strategy
+  ], 180_000);
+  const response = deterministicResponse || await runJsonCommand(command, ["--request-json", JSON.stringify(request)], {
     env,
     cwd: repo.target,
-    timeoutMs: Number(spec.pack_config?.research_strategy?.timeout_ms || 180_000),
+    ...timeoutPolicy,
     maxBuffer: 10 * 1024 * 1024
   });
   const strategy = normalizeStrategyResponse(response, spec, targetCatalog, {
@@ -712,6 +747,7 @@ export async function runProductIterationStrategy({ spec, run, sources, actions,
     candidate_model_lease: response.candidate_model_lease || request.candidate_model_lease || null,
     repaired_json: Boolean(response.repaired_json),
     text_fallback: Boolean(response.text_fallback),
+    deterministic_trigger_target: Boolean(response.deterministic_trigger_target),
     decision: strategy.decision,
     summary: strategy.summary,
     rationale: strategy.rationale,
@@ -733,6 +769,41 @@ export async function runProductIterationStrategy({ spec, run, sources, actions,
     source_count: sources.length,
     passed_source_count: sources.filter((source) => source.status === "passed").length,
     failure: strategyReady ? null : { code: FAILURE_CODES.GATE_FAILED, message: "Research decision deferred implementation." }
+  };
+}
+
+function deterministicStrategyResponseFromTrigger({ spec, run, targetCatalog }) {
+  const policy = spec.pack_config?.research_strategy || {};
+  if (policy.deterministic_trigger_target === false) return null;
+  const triggerPayload = run?.trigger_event?.payload || {};
+  const targetId = String(triggerPayload.target_id || "").trim();
+  if (!targetId) return null;
+  const matched = asArray(targetCatalog).find((target) => (
+    target && typeof target === "object" && String(target.id || target.target_id || "").trim() === targetId
+  ));
+  if (!matched) return null;
+  const selected = {
+    ...matched,
+    id: targetId,
+    target_id: targetId,
+    generated_from: matched.generated_from || "trigger_payload"
+  };
+  return {
+    schema_version: "across-host-research-decision/1.0",
+    status: "passed",
+    model_backed: false,
+    provider: "deterministic",
+    model: "trigger-target",
+    finish_reason: "trigger_target",
+    deterministic_trigger_target: true,
+    decision_hash: hashText(stableJson({ target_id: targetId, spec_id: spec.id || null })),
+    decision: "implement",
+    summary: `Deterministically selected trigger target ${targetId}.`,
+    rationale: "The trigger payload supplied an explicit target_id that matched target_catalog; no model target selection was required.",
+    selected_target_id: targetId,
+    selected_iteration: selected,
+    candidate_targets: asArray(targetCatalog),
+    rejected_directions: ["model_target_reselection"]
   };
 }
 
@@ -1945,7 +2016,7 @@ async function runHostReviewDecision({
   };
   const response = await runJsonCommand(command, ["--request-json", JSON.stringify(request)], {
     env,
-    timeoutMs: Number(reviewerPolicy.timeout_ms || reviewerPolicy.timeoutMs || 180_000),
+    ...commandTimeoutPolicy([reviewerPolicy], 180_000),
     maxBuffer: 4 * 1024 * 1024
   });
   return normalizeHostReviewDecision(response);

@@ -143,6 +143,31 @@
     "network": "adapter_scoped",
     "env": "minimal"
   },
+  "runtime_policy": {
+    "risk_profile": "high",
+    "timeouts": {
+      "total_run_timeout_ms": 1800000,
+      "adapter_timeout_ms": 900000,
+      "model_timeout_ms": 900000
+    },
+    "budget": {
+      "max_model_calls": 8,
+      "max_candidate_repairs": 3,
+      "max_usd": 0
+    },
+    "network_policy": {
+      "mode": "adapter_scoped",
+      "allowlist": []
+    },
+    "filesystem_policy": {
+      "mode": "run_scoped",
+      "allowlist_roots": []
+    },
+    "promotion": {
+      "human_approval_required": true,
+      "merge_release_signing_blocked": true
+    }
+  },
   "evidence_contract": {
     "schema_version": "across-loop-evidence/1.0",
     "required_sections": ["sources", "actions", "gates", "outputs", "memory", "audit", "candidate"]
@@ -210,16 +235,25 @@
       "required": true,
       "timeout_ms": 180000
     },
+    "code_iteration": {
+      "timeout_ms": 900000,
+      "idle_timeout_ms": 300000,
+      "max_wall_timeout_ms": 900000
+    },
     "model_policy": {
       "required": true,
       "agent_id": "codex",
       "provider": "local-agent",
-      "model": "codex",
+      "model": "gpt-5.5",
+      "fallback_models": ["gpt-5.4", "gpt-5.4-mini"],
       "temperature": 0.2,
       "max_tokens": 2200,
       "direct_patches": true,
       "allow_host_validation_repair_fallback": true,
-      "code_mode": "direct_patches"
+      "code_mode": "direct_patches",
+      "timeout_ms": 600000,
+      "idle_timeout_ms": 300000,
+      "max_wall_timeout_ms": 600000
     },
     "semantic_review": {
       "require_model_backed": true,
@@ -243,11 +277,15 @@
     "required": true,
     "agent_id": "codex",
     "provider": "local-agent",
-    "model": "codex",
+    "model": "gpt-5.5",
+    "fallback_models": ["gpt-5.4", "gpt-5.4-mini"],
     "temperature": 0.2,
     "max_tokens": 2200,
     "direct_patches": true,
     "allow_host_validation_repair_fallback": true,
-    "code_mode": "direct_patches"
+    "code_mode": "direct_patches",
+    "timeout_ms": 600000,
+    "idle_timeout_ms": 300000,
+    "max_wall_timeout_ms": 600000
   }
 }

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveCommand, sanitizedSubprocessEnv } from "../src/process-client.js";
+import { resolveCommand, runJsonCommand, sanitizedSubprocessEnv } from "../src/process-client.js";
 import { AUTOPILOT_VERSION } from "../src/version.js";
 
 const exec = promisify(execFile);
@@ -24,6 +24,81 @@ test("plugin manifest exposes Autopilot host contract", async () => {
   assert.equal(manifest.integrations.memoryProvider, "across-context");
   assert.equal(manifest.compatibility.requiredHostVersion, ">=0.9.0");
   assert.equal(manifest.paths.data, join(acrossHome, "data", "across-autopilot"));
+});
+
+test("runJsonCommand refreshes idle timeout while command is active", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-active-timeout-"));
+  const command = join(home, "active-command.js");
+  await writeFile(command, `#!/usr/bin/env node
+let count = 0;
+const timer = setInterval(() => {
+  count += 1;
+  process.stderr.write(JSON.stringify({ event: "heartbeat", count }) + "\\n");
+  if (count === 4) {
+    clearInterval(timer);
+    process.stdout.write(JSON.stringify({ status: "passed", count }));
+  }
+}, 60);
+`, "utf8");
+  await chmod(command, 0o755);
+
+  const result = await runJsonCommand(["node", command], [], {
+    idleTimeoutMs: 120,
+    maxWallTimeoutMs: 1000
+  });
+
+  assert.equal(result.status, "passed");
+  assert.equal(result.count, 4);
+});
+
+test("runJsonCommand kills silent commands on idle timeout", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-idle-timeout-"));
+  const command = join(home, "silent-command.js");
+  await writeFile(command, `#!/usr/bin/env node
+setTimeout(() => process.stdout.write(JSON.stringify({ status: "passed" })), 250);
+`, "utf8");
+  await chmod(command, 0o755);
+
+  await assert.rejects(
+    () => runJsonCommand(["node", command], [], {
+      idleTimeoutMs: 80,
+      maxWallTimeoutMs: 1000
+    }),
+    (error) => error.code === "adapter.timeout" && error.timeout_kind === "idle_timeout"
+  );
+});
+
+test("AAA self-iteration specs do not carry unsupported Codex model fallbacks", async () => {
+  const specNames = [
+    "aaa-autonomous-self-iteration.loop.json",
+    "aaa-platform-self-repair.loop.json",
+    "aaa-research-driven-self-iteration.loop.json",
+    "aaa-self-iteration-product.loop.json"
+  ];
+  const supported = new Set(["codex", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"]);
+  const unsupported = new Set(["gpt-5", "gpt-5-codex"]);
+
+  for (const name of specNames) {
+    const spec = JSON.parse(await readFile(join(process.cwd(), "examples", name), "utf8"));
+    const policies = [
+      spec.model_policy,
+      spec.pack_config?.model_policy,
+      spec.pack_config?.research_model_policy,
+      spec.pack_config?.builder_model_policy,
+      spec.pack_config?.reviewer_model_policy
+    ].filter(Boolean);
+    for (const policy of policies) {
+      if (policy.agent_id !== "codex") continue;
+      const models = [policy.model, ...(policy.fallback_models || [])].filter(Boolean);
+      assert.ok(models.length > 0, `${name} must declare Codex model candidates`);
+      assert.ok(policy.idle_timeout_ms > 0, `${name} must declare idle_timeout_ms`);
+      assert.ok(policy.max_wall_timeout_ms > 0, `${name} must declare max_wall_timeout_ms`);
+      for (const model of models) {
+        assert.equal(unsupported.has(model), false, `${name} contains unsupported model ${model}`);
+        assert.equal(supported.has(model), true, `${name} contains unknown Codex model ${model}`);
+      }
+    }
+  }
 });
 
 test("host-plugin install writes wrapper and manifest", async () => {
