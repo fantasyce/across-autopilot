@@ -51,6 +51,31 @@ const timer = setInterval(() => {
   assert.equal(result.count, 4);
 });
 
+test("runJsonCommand refreshes wall timeout while command is active", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-active-wall-timeout-"));
+  const command = join(home, "active-wall-command.js");
+  await writeFile(command, `#!/usr/bin/env node
+let count = 0;
+const timer = setInterval(() => {
+  count += 1;
+  process.stderr.write(JSON.stringify({ event: "heartbeat", count }) + "\\n");
+  if (count === 4) {
+    clearInterval(timer);
+    process.stdout.write(JSON.stringify({ status: "passed", count }));
+  }
+}, 100);
+`, "utf8");
+  await chmod(command, 0o755);
+
+  const result = await runJsonCommand(["node", command], [], {
+    idleTimeoutMs: 180,
+    maxWallTimeoutMs: 150
+  });
+
+  assert.equal(result.status, "passed");
+  assert.equal(result.count, 4);
+});
+
 test("runJsonCommand kills silent commands on idle timeout", async () => {
   const home = await mkdtemp(join(tmpdir(), "across-autopilot-idle-timeout-"));
   const command = join(home, "silent-command.js");
