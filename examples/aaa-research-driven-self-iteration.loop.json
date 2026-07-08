@@ -234,7 +234,7 @@
     "research_strategy": {
       "goal": "Review current autonomous software engineering agent practices and choose one bounded product improvement for AAA's self-iteration loop.",
       "timeout_ms": 900000,
-      "idle_timeout_ms": 300000,
+      "idle_timeout_ms": 900000,
       "max_wall_timeout_ms": 900000,
       "product_context": {
         "ecosystem": ["across-agents-assistant", "across-orchestrator", "across-context", "across-autopilot"],
@@ -363,7 +363,7 @@
       "agent_id": "codex",
       "provider": "local-agent",
       "model": "gpt-5.3-codex-spark",
-      "fallback_models": ["codex-auto-review"],
+      "fallback_models": [],
       "temperature": 0.2,
       "max_tokens": 4200,
       "direct_patches": true,
@@ -377,13 +377,13 @@
       "agent_id": "codex",
       "provider": "local-agent",
       "model": "gpt-5.3-codex-spark",
-      "fallback_models": ["codex-auto-review"],
+      "fallback_models": [],
       "temperature": 0.2,
       "max_tokens": 4200,
       "direct_patches": true,
       "code_mode": "direct_patches",
       "timeout_ms": 900000,
-      "idle_timeout_ms": 300000,
+      "idle_timeout_ms": 900000,
       "max_wall_timeout_ms": 900000
     }
   },
@@ -392,13 +392,13 @@
     "agent_id": "codex",
     "provider": "local-agent",
     "model": "gpt-5.3-codex-spark",
-    "fallback_models": ["codex-auto-review"],
+    "fallback_models": [],
     "temperature": 0.2,
     "max_tokens": 4200,
     "direct_patches": true,
     "code_mode": "direct_patches",
     "timeout_ms": 900000,
-    "idle_timeout_ms": 300000,
+    "idle_timeout_ms": 900000,
     "max_wall_timeout_ms": 900000
   }
 }

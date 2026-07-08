@@ -71,13 +71,17 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.28`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.28` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.29`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.29` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
 
+`v0.2.29` removes `codex-auto-review` from AAA self-iteration model candidates
+and gives research/review Codex calls a longer silent reasoning window after
+live E2E showed `gpt-5.3-codex-spark` could exceed a 300-second idle budget.
+
 `v0.2.28` keeps AAA self-iteration research and review on the smoke-tested
-`gpt-5.3-codex-spark` model first, leaving `codex-auto-review` as a fallback
-after live E2E showed review-model sessions could hang during research repair.
+`gpt-5.3-codex-spark` model first after live E2E showed review-model sessions
+could hang during research repair.
 
 `v0.2.26` treats active stdout/stderr streaming as progress for host command
 wall-timeout windows, so complex agent calls are not killed while they continue
