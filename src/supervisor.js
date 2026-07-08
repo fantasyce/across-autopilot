@@ -1,5 +1,5 @@
 import { AdapterRegistry } from "./adapter-registry.js";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { asyncTaskEnvelope, runIdForTaskId, taskIdForRun } from "./async-task.js";
 import { ContextClient } from "./context-client.js";
@@ -116,29 +116,37 @@ export class AutopilotSupervisor {
           retryable: false
         });
       }
-      await this.store.updateRun(run.run_id, { started_at: new Date().toISOString() });
+      await this.store.updateRun(run.run_id, {
+        started_at: new Date().toISOString(),
+        executor: currentExecutorRecord("loop_run")
+      });
       await this.store.transition(run.run_id, "negotiating_capabilities", "Capabilities negotiated.", { ...this.capabilities(), capability_preflight: capabilityPreflight });
       await this.writeEvidenceSnapshot({ spec, run, sources, actions, gates, outputs, memory });
 
       const recalled = await this.recallMemory(spec);
       memory.recalled = recalled.results || [];
       await this.store.audit(run.run_id, spec.id, "context_recalled", "Context recall completed.", recalled);
+      await this.assertRunNotCancelled(run);
       await this.store.transition(run.run_id, "discovering_sources", "Discovering sources.");
       sources = await this.runSources(spec, run);
       await this.writeEvidenceSnapshot({ spec, run, sources, actions, gates, outputs, memory });
 
+      await this.assertRunNotCancelled(run);
       await this.store.transition(run.run_id, "planning", "Planning actions.");
       const plan = this.buildPlan(spec, sources, memory.recalled);
       await this.store.writePlan(run.run_id, plan);
 
+      await this.assertRunNotCancelled(run);
       await this.store.transition(run.run_id, "running", "Running adapters.");
       actions = await this.runActions(spec, run, sources, memory.recalled);
       gates = extractGates(actions);
 
+      await this.assertRunNotCancelled(run);
       await this.store.transition(run.run_id, "collecting_evidence", "Collecting outputs.");
       outputs = await this.writeOutputs(spec, run, { sources, actions, gates });
       await this.writeEvidenceSnapshot({ spec, run, sources, actions, gates, outputs, memory });
 
+      await this.assertRunNotCancelled(run);
       await this.store.transition(run.run_id, "validating_gates", "Validating gates.");
       const failedRequired = gates.filter((gate) => gate.required && gate.status !== "passed");
       if (failedRequired.length && !spec.failure_policy?.continue_on_gate_failure) {
@@ -153,6 +161,7 @@ export class AutopilotSupervisor {
       await this.store.transition(run.run_id, "remembering", "Writing pending memory.");
       const memoryActions = actions.filter((action) => action.adapter === "memory_write_candidate");
       memory.written = memoryActions.map((action) => action.result?.memory || action.result).filter(Boolean);
+      await this.assertRunNotCancelled(run);
       run = await this.store.updateRun(run.run_id, { status: "completed", state: "completed", completed_at: new Date().toISOString() });
       await this.store.audit(run.run_id, spec.id, "run_completed", "Run completed.", { outputs: outputs.length });
     } catch (error) {
@@ -163,13 +172,20 @@ export class AutopilotSupervisor {
       if (!run && spec) run = await this.store.createRun(spec, { trigger: options.trigger || "manual" });
       if (run) {
         gates = gates.length ? gates : [gateFromFailure(failure)];
+        const cancelled = failure.code === FAILURE_CODES.RUN_CANCELLED;
         run = await this.store.updateRun(run.run_id, {
-          status: failure.code === FAILURE_CODES.APPROVAL_REQUIRED ? "blocked" : "failed",
-          state: failure.failed_state || "failed",
+          status: cancelled ? "cancelled" : failure.code === FAILURE_CODES.APPROVAL_REQUIRED ? "blocked" : "failed",
+          state: cancelled ? "cancelled" : failure.failed_state || "failed",
           completed_at: new Date().toISOString(),
-          failure
+          failure: cancelled ? null : failure
         });
-        await this.store.audit(run.run_id, run.spec_id, "run_failed", "Run failed.", failure);
+        await this.store.audit(
+          run.run_id,
+          run.spec_id,
+          cancelled ? "run_cancelled" : "run_failed",
+          cancelled ? "Run cancelled." : "Run failed.",
+          cancelled ? { reason: failure.message } : failure
+        );
       } else {
         throw error;
       }
@@ -389,9 +405,33 @@ export class AutopilotSupervisor {
   }
 
   async cancel(runId, reason = "cancelled") {
-    const run = await this.store.updateRun(runId, { status: "cancelled", state: "cancelled", completed_at: new Date().toISOString() });
-    await this.store.audit(runId, run.spec_id, "run_cancelled", "Run cancelled.", { reason });
+    const prior = await this.store.loadRun(runId);
+    const requestedAt = new Date().toISOString();
+    const termination = terminateRunProcessTree(prior?.executor?.pid);
+    const run = await this.store.updateRun(runId, {
+      status: "cancelled",
+      state: "cancelled",
+      completed_at: requestedAt,
+      cancellation: {
+        reason,
+        requested_at: requestedAt,
+        termination
+      }
+    });
+    await this.store.audit(runId, run.spec_id, "run_cancelled", "Run cancelled.", { reason, termination });
     return run;
+  }
+
+  async assertRunNotCancelled(run) {
+    if (!run?.run_id) return;
+    const current = await this.store.loadRun(run.run_id);
+    if (current?.status !== "cancelled") return;
+    throw new LoopFailure({
+      code: FAILURE_CODES.RUN_CANCELLED,
+      failedState: "cancelled",
+      message: `Run ${run.run_id} was cancelled.`,
+      retryable: false
+    });
   }
 
   async retry(runId) {
@@ -515,6 +555,7 @@ export class AutopilotSupervisor {
     let gates = [];
     const runtimeBudget = createRuntimeBudgetGuard(spec, run);
     for (const actionId of spec.used_adapters.actions || []) {
+      await this.assertRunNotCancelled(run);
       const adapter = this.registry.getAction(actionId);
       if (!adapter) throw new LoopFailure({ code: FAILURE_CODES.CAPABILITY_MISSING, failedState: "running", message: `Missing action adapter ${actionId}.` });
       assertRuntimeBudgetCanStart(runtimeBudget, actions, actionId);
@@ -580,6 +621,7 @@ export class AutopilotSupervisor {
         throw wrapped;
       }
       actions.push(action);
+      await this.assertRunNotCancelled(run);
       if (action.adapter === "quality_gate_evaluation") gates = action.result.gates || [];
       await this.store.audit(run.run_id, spec.id, "action_completed", `Action ${actionId} completed.`, { adapter: actionId, status: action.status });
       await this.writeEvidenceSnapshot({
@@ -990,6 +1032,78 @@ function runtimeTimeoutForAction(runtimeBudget, adapterId) {
 
 function isModelBackedAdapter(adapterId) {
   return MODEL_BACKED_ACTIONS.has(adapterId);
+}
+
+function currentExecutorRecord(role) {
+  return {
+    role,
+    pid: process.pid,
+    ppid: process.ppid,
+    started_at: new Date().toISOString()
+  };
+}
+
+function terminateRunProcessTree(pid) {
+  const rootPid = Number(pid);
+  if (!Number.isInteger(rootPid) || rootPid <= 0) {
+    return { attempted: false, reason: "missing_pid" };
+  }
+  if (rootPid === process.pid) {
+    return { attempted: false, pid: rootPid, reason: "same_process" };
+  }
+  const pids = descendantPids(rootPid);
+  const killed = [];
+  const errors = [];
+  for (const targetPid of [...pids].reverse()) {
+    if (targetPid === process.pid) continue;
+    try {
+      process.kill(targetPid, "SIGTERM");
+      killed.push(targetPid);
+    } catch (error) {
+      if (error?.code !== "ESRCH") errors.push({ pid: targetPid, error: String(error?.message || error).slice(0, 200) });
+    }
+  }
+  return {
+    attempted: true,
+    pid: rootPid,
+    signal: "SIGTERM",
+    killed_pids: killed,
+    error_count: errors.length,
+    ...(errors.length ? { errors: errors.slice(0, 5) } : {})
+  };
+}
+
+function descendantPids(rootPid) {
+  const rows = processTableRows();
+  const childrenByParent = new Map();
+  for (const row of rows) {
+    if (!childrenByParent.has(row.ppid)) childrenByParent.set(row.ppid, []);
+    childrenByParent.get(row.ppid).push(row.pid);
+  }
+  const ordered = [];
+  const stack = [rootPid];
+  const seen = new Set();
+  while (stack.length) {
+    const pid = stack.pop();
+    if (!Number.isInteger(pid) || seen.has(pid)) continue;
+    seen.add(pid);
+    ordered.push(pid);
+    for (const child of childrenByParent.get(pid) || []) stack.push(child);
+  }
+  return ordered;
+}
+
+function processTableRows() {
+  try {
+    const output = execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    return String(output || "")
+      .split(/\r?\n/)
+      .map((line) => line.trim().split(/\s+/).map(Number))
+      .filter(([pid, ppid]) => Number.isInteger(pid) && Number.isInteger(ppid))
+      .map(([pid, ppid]) => ({ pid, ppid }));
+  } catch {
+    return [];
+  }
 }
 
 function boundedRepairLimit(spec, configuredLimit) {

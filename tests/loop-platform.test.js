@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -4405,6 +4405,37 @@ test("kill switch blocks adapter execution before side effects", async () => {
   assert.equal(run.status, "failed");
   assert.equal(evidence.failure.code, "adapter.disabled");
   assert.equal(evidence.orchestrator.tasks.length, 0);
+});
+
+test("cancel terminates a recorded run executor process", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-cancel-pid-"));
+  const store = new RunStore({ env: { ...process.env, ACROSS_HOME: home } });
+  const supervisor = new AutopilotSupervisor({
+    store,
+    orchestratorClient: new FakeOrchestrator(),
+    contextClient: new FakeContext()
+  });
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  let run;
+  try {
+    run = await store.createRun({ id: "cancel-pid-loop" });
+    await store.updateRun(run.run_id, { executor: { pid: child.pid, role: "test_executor" } });
+
+    const cancelled = await supervisor.cancel(run.run_id, "test cancellation");
+    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 2000))]);
+
+    assert.equal(cancelled.status, "cancelled");
+    assert.equal(cancelled.cancellation.reason, "test cancellation");
+    assert.equal(cancelled.cancellation.termination.attempted, true);
+    assert.equal(cancelled.cancellation.termination.killed_pids.includes(child.pid), true);
+    assert.notEqual(child.exitCode === null && child.signalCode === null, true);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+      await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 2000))]);
+    }
+  }
 });
 
 test("telemetry aggregates completed runs without raw source text", async () => {
