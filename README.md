@@ -71,9 +71,13 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.26`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.26` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.27`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.27` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.27` filters generated pytest validation commands before candidate
+execution and expands AAA runtime dependency smoke coverage for older system
+Python standard-library detection.
 
 `v0.2.26` treats active stdout/stderr streaming as progress for host command
 wall-timeout windows, so complex agent calls are not killed while they continue

@@ -181,16 +181,20 @@ IMPORT_NAME_OVERRIDES = {
 # imports them even when they enter through another dependency family.
 PACKAGED_RUNTIME_IMPORTS = {"anyio", "pydantic", "starlette"}
 COMMON_STDLIB_IMPORTS = {
-    "__future__", "abc", "argparse", "array", "asyncio", "atexit", "base64",
-    "collections", "concurrent", "contextlib", "copy", "csv", "dataclasses",
-    "datetime", "decimal", "enum", "errno", "faulthandler", "functools",
-    "hashlib", "hmac", "html", "http", "importlib", "inspect", "io",
-    "itertools", "json", "logging", "math", "mimetypes", "multiprocessing",
-    "operator", "os", "pathlib", "pickle", "platform", "plistlib", "queue",
-    "random", "re", "secrets", "shlex", "shutil", "signal", "socket",
-    "sqlite3", "ssl", "statistics", "string", "subprocess", "sys",
-    "tempfile", "threading", "time", "traceback", "types", "typing",
-    "urllib", "uuid", "warnings", "weakref", "zipfile"
+    "__future__", "abc", "argparse", "array", "ast", "asyncio", "atexit",
+    "base64", "bisect", "calendar", "collections", "concurrent",
+    "configparser", "contextlib", "copy", "csv", "dataclasses", "datetime",
+    "decimal", "difflib", "email", "enum", "errno", "faulthandler", "fnmatch",
+    "fractions", "functools", "glob", "gzip", "hashlib", "heapq", "hmac",
+    "html", "http", "importlib", "inspect", "io", "itertools", "json",
+    "locale", "logging", "lzma", "math", "mimetypes", "multiprocessing",
+    "operator", "os", "pathlib", "pickle", "platform", "plistlib", "pprint",
+    "queue", "random", "re", "resource", "sched", "secrets", "selectors",
+    "shlex", "shutil", "signal", "socket", "sqlite3", "ssl", "statistics",
+    "string", "struct", "subprocess", "symtable", "sys", "sysconfig",
+    "tempfile", "textwrap", "threading", "time", "traceback", "types",
+    "typing", "unittest", "urllib", "uuid", "warnings", "weakref", "xml",
+    "zipfile"
 }
 
 def requirement_name(line):
@@ -3020,6 +3024,11 @@ function candidateHasAaaBackendApi(candidateWorkspace) {
 function validationCommandIsAdmissible(command) {
   const executable = basename(String(command.command || ""));
   const args = asArray(command.args).map(String);
+  if (["python", "python3"].includes(executable)
+    && args[0] === "-m"
+    && args[1] === "pytest") {
+    return false;
+  }
   const codeIndex = args.indexOf("-c");
   if (!["python", "python3"].includes(executable) || codeIndex === -1) return true;
   const code = args[codeIndex + 1];

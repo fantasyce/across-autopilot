@@ -725,6 +725,66 @@ test("candidate validation rejects undeclared AAA backend runtime imports", asyn
   assert.doesNotMatch(smoke.stderr, /fastapi in/);
 });
 
+test("candidate validation allows stdlib AAA backend runtime imports", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-aaa-stdlib-runtime-deps-"));
+  const sourceRoot = join(home, "sources");
+  const repos = [];
+  for (const id of ["across-agents-assistant", "across-orchestrator", "across-context", "across-autopilot"]) {
+    const source = join(sourceRoot, id);
+    await createGitSource(source, id === "across-agents-assistant" ? {
+      "README.md": "# AAA\n",
+      "backend/requirements.txt": "fastapi>=0.138.2\n",
+      "backend/requirements_no_pyobjc.txt": "fastapi>=0.138.2\n",
+      "backend/src/across_agents_assistant/__init__.py": "",
+      "backend/src/across_agents_assistant/api_server.py": "APP_READY = True\n"
+    } : {
+      "README.md": `# ${id}\n`
+    });
+    repos.push({ id, source });
+  }
+
+  const spec = {
+    id: "aaa-stdlib-runtime-deps",
+    pack_config: {
+      target_repo: "across-agents-assistant",
+      candidate_ecosystem: { repos },
+      candidate_validation: { commands: [] }
+    }
+  };
+  const run = { run_id: "run-aaa-stdlib-runtime-deps" };
+  const env = { ...process.env, ACROSS_HOME: home };
+  const acquired = await acquireCandidateEcosystem({ spec, run, env });
+  const aaaTarget = acquired.repos.find((repo) => repo.id === "across-agents-assistant").target;
+  await writeFile(
+    join(aaaTarget, "backend", "src", "across_agents_assistant", "api_server.py"),
+    "import ast\nAPP_READY = bool(ast.parse('value = 1'))\n",
+    "utf8"
+  );
+
+  const diff = await candidateEcosystemDiff({
+    spec,
+    run,
+    actions: [{ adapter: "candidate_ecosystem_acquire", result: acquired }],
+    env
+  });
+  const validated = await validateCandidateEcosystem({
+    spec,
+    run,
+    actions: [
+      { adapter: "candidate_ecosystem_acquire", result: acquired },
+      { adapter: "candidate_ecosystem_diff", result: diff }
+    ],
+    env
+  });
+  const smoke = validated.commands.find((command) => (
+    command.implicit && command.summary === "AAA backend runtime dependency import contract smoke"
+  ));
+
+  assert.ok(smoke);
+  assert.equal(smoke.status, "passed");
+  assert.doesNotMatch(smoke.stderr, /ast in/);
+});
+
 test("candidate validation rejects missing exports from changed AAA runtime imports", async () => {
   const home = await mkdtemp(join(tmpdir(), "across-autopilot-aaa-runtime-imports-"));
   const sourceRoot = join(home, "sources");
@@ -3097,6 +3157,114 @@ console.log(JSON.stringify({
     assert.ok(rendered.some((command) => command.includes("runpy.run_path")));
   } finally {
     restoreEnv(previousEnv);
+  }
+});
+
+test("strategy admission filters generated pytest validation commands", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-pytest-validation-command-"));
+  const repo = join(home, "candidate", "across-agents-assistant");
+  await mkdir(join(repo, "backend", "src", "across_agents_assistant"), { recursive: true });
+  await mkdir(join(repo, "backend", "tests"), { recursive: true });
+  await writeFile(join(repo, "backend", "src", "across_agents_assistant", "__init__.py"), "", "utf8");
+  await writeFile(join(repo, "backend", "src", "across_agents_assistant", "api_server.py"), "APP_READY = True\n", "utf8");
+  const commandPath = join(home, "host-research-pytest-command.js");
+  await writeFile(commandPath, `#!/usr/bin/env node
+console.log(JSON.stringify({
+  schema_version: "across-host-research-decision/1.0",
+  status: "passed",
+  model_backed: true,
+  provider: "fake-host",
+  model: "fake-researcher",
+  decision_hash: "pytest-command",
+  decision: "implement",
+  selected_target_id: "pytest-validation-command",
+  summary: "Select target with unavailable pytest validation",
+  selected_iteration: {
+    target_id: "pytest-validation-command",
+    target_repo: "across-agents-assistant",
+    goal: "Add a candidate helper.",
+    allowed_patch_paths: [
+      "backend/src/across_agents_assistant/autopilot_pytest_command.py",
+      "backend/tests/test_autopilot_pytest_command.py"
+    ],
+    validation_commands: [
+      {
+        repo: "across-agents-assistant",
+        command: "python3",
+        args: ["-m", "pytest", "backend/tests/test_autopilot_pytest_command.py", "-q"]
+      }
+    ],
+    semantic_review: { minimum_validation_commands: 2 },
+    source_refs: ["pytest-validation-fixture"],
+    tool_packs: ["validation_harness"],
+    generated_from: "model_generated",
+    risk: "low"
+  },
+  candidate_targets: [{
+    id: "pytest-validation-command",
+    target_repo: "across-agents-assistant",
+    summary: "Add candidate helper.",
+    goal: "Add a candidate helper.",
+    allowed_patch_paths: [
+      "backend/src/across_agents_assistant/autopilot_pytest_command.py",
+      "backend/tests/test_autopilot_pytest_command.py"
+    ],
+    validation_commands: [
+      {
+        repo: "across-agents-assistant",
+        command: "python3",
+        args: ["-m", "pytest", "backend/tests/test_autopilot_pytest_command.py", "-q"]
+      }
+    ],
+    semantic_review: { minimum_validation_commands: 2 },
+    source_refs: ["pytest-validation-fixture"],
+    tool_packs: ["validation_harness"],
+    generated_from: "model_generated",
+    risk: "low"
+  }],
+  rejected_directions: []
+}));
+`, "utf8");
+
+  const previousEnv = snapshotEnv(["ACROSS_AAA_HOST_RESEARCH_COMMAND", "ACROSS_HOME"]);
+  Object.assign(process.env, {
+    ACROSS_AAA_HOST_RESEARCH_COMMAND: JSON.stringify(["node", commandPath]),
+    ACROSS_HOME: home
+  });
+  try {
+    const strategy = await runProductIterationStrategy({
+      spec: {
+        id: "pytest-validation-command",
+        name: "Pytest Validation Command",
+        used_adapters: { actions: ["candidate_ecosystem_acquire", "product_iteration_strategy"] },
+        pack_config: {
+          target_repo: "across-agents-assistant",
+          model_policy: { required: true },
+          research_strategy: { autonomous: true }
+        }
+      },
+      run: { run_id: "run-pytest-validation-command" },
+      sources: [],
+      actions: [{
+        adapter: "candidate_ecosystem_acquire",
+        result: {
+          candidate_id: "candidate-pytest-validation-command",
+          repos: [{ id: "across-agents-assistant", target: repo, source: repo }],
+          four_repo_manifest: true
+        }
+      }],
+      recalledMemory: [],
+      env: process.env
+    });
+
+    const rendered = strategy.selected_iteration.validation_commands.map((command) => [command.command, ...command.args].join(" "));
+    assert.equal(rendered.some((command) => command.includes("-m pytest")), false);
+    assert.ok(rendered.some((command) => command.includes("git diff --check")));
+    assert.ok(rendered.some((command) => command.includes("py_compile")));
+    assert.ok(rendered.some((command) => command.includes("runpy.run_path('backend/tests/test_autopilot_pytest_command.py')")));
+  } finally {
+    restoreEnv(previousEnv);
+    await rm(home, { recursive: true, force: true });
   }
 });
 
