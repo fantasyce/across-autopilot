@@ -68,15 +68,15 @@ setTimeout(() => process.stdout.write(JSON.stringify({ status: "passed" })), 250
   );
 });
 
-test("AAA self-iteration specs do not carry unsupported Codex model fallbacks", async () => {
+test("AAA self-iteration specs use locally validated Codex model candidates", async () => {
   const specNames = [
     "aaa-autonomous-self-iteration.loop.json",
     "aaa-platform-self-repair.loop.json",
     "aaa-research-driven-self-iteration.loop.json",
     "aaa-self-iteration-product.loop.json"
   ];
-  const supported = new Set(["codex", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"]);
-  const unsupported = new Set(["gpt-5", "gpt-5-codex"]);
+  const supported = new Set(["codex", "gpt-5.3-codex-spark", "codex-auto-review"]);
+  const unsupported = new Set(["gpt-5", "gpt-5-codex", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5"]);
 
   for (const name of specNames) {
     const spec = JSON.parse(await readFile(join(process.cwd(), "examples", name), "utf8"));
@@ -119,6 +119,8 @@ test("AAA self-iteration specs allow long silent Codex code generation", async (
     assert.ok(codeIteration.max_wall_timeout_ms >= 2_400_000, `${name} code iteration needs a bounded wall-clock budget`);
     assert.ok(builder.idle_timeout_ms >= 900_000, `${name} builder model policy must inherit the long code idle window`);
     assert.ok(research.idle_timeout_ms <= 300_000, `${name} research policy should still fail over quickly`);
+    assert.equal(research.model, "codex-auto-review", `${name} research should use the smoke-tested review model first`);
+    assert.equal(builder.model, "gpt-5.3-codex-spark", `${name} builder should use the smoke-tested Codex code model first`);
   }
 });
 

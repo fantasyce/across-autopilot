@@ -4126,7 +4126,7 @@ console.log(JSON.stringify({
       builder_model_policy: {
         agent_id: "codex",
         provider: "local-agent",
-        model: "gpt-5.5",
+        model: "gpt-5.3-codex-spark",
         timeout_ms: 900000,
         idle_timeout_ms: 300000,
         max_wall_timeout_ms: 900000
