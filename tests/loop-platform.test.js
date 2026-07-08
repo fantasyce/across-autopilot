@@ -3803,6 +3803,82 @@ console.log(JSON.stringify({
   assert.doesNotMatch(content, /truncated api replacement/);
 });
 
+test("host code iteration recovers local agent timeout with bounded fallback patches", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-code-timeout-fallback-"));
+  const repo = join(home, "candidate", "across-agents-assistant");
+  await createGitSource(repo, {
+    "backend/src/across_agents_assistant/api_server.py": "def existing_api():\n    return {'status': 'ok'}\n"
+  });
+
+  const command = join(home, "host-code-timeout.js");
+  await writeFile(command, `#!/usr/bin/env node
+console.log(JSON.stringify({
+  schema_version: "across-host-code-iteration/1.0",
+  status: "failed",
+  status_code: 504,
+  error: "local agent codex timed out after 900.3s: idle_timeout"
+}));
+process.exit(1);
+`, "utf8");
+
+  const productPath = "backend/src/across_agents_assistant/autopilot_research_timeout_recovery.py";
+  const testPath = "backend/tests/test_autopilot_research_timeout_recovery.py";
+  const apiPath = "backend/src/across_agents_assistant/api_server.py";
+  const result = await runHostCodeIteration({
+    spec: {
+      id: "aaa-autonomous-self-iteration",
+      pack_config: {
+        target_repo: "across-agents-assistant",
+        code_iteration: {
+          command: JSON.stringify(["node", command]),
+          allowed_patch_paths: [apiPath, productPath, testPath]
+        },
+        builder_model_policy: {
+          allow_host_validation_repair_fallback: true
+        }
+      }
+    },
+    run: { run_id: "run-code-timeout-fallback" },
+    actions: [
+      {
+        adapter: "candidate_ecosystem_acquire",
+        result: {
+          repos: [{ id: "across-agents-assistant", target: repo }],
+          model_lease: {}
+        }
+      },
+      {
+        adapter: "product_iteration_strategy",
+        result: {
+          selected_iteration: {
+            target_id: "autonomous-research-timeout-recovery",
+            target_repo: "across-agents-assistant",
+            goal: "Add product-integrated timeout recovery evidence.",
+            allowed_patch_paths: [apiPath, productPath, testPath],
+            validation_commands: []
+          }
+        }
+      }
+    ],
+    env: process.env
+  });
+
+  assert.equal(result.status, "passed");
+  assert.equal(result.model_backed, false);
+  assert.equal(result.host_validation_repair_fallback, true);
+  assert.equal(result.timeout_recovery.kind, "local_agent_timeout");
+  assert.ok(result.changed_files.includes(`across-agents-assistant/${apiPath}`));
+  assert.ok(result.changed_files.includes(`across-agents-assistant/${productPath}`));
+  assert.ok(result.changed_files.includes(`across-agents-assistant/${testPath}`));
+
+  const helper = await readFile(join(repo, productPath), "utf8");
+  const api = await readFile(join(repo, apiPath), "utf8");
+  const tests = await readFile(join(repo, testPath), "utf8");
+  assert.match(helper, /def summarize_research_timeout_recovery/);
+  assert.match(api, /build_autopilot_research_timeout_recovery_snapshot/);
+  assert.match(tests, /def test_timeout_signal_is_recoverable/);
+});
+
 test("semantic alignment review rejects self-proof-only candidate changes", async () => {
   const result = await semanticAlignmentReview({
     spec: {
@@ -4373,7 +4449,7 @@ console.log(JSON.stringify({
       builder_model_policy: {
         agent_id: "codex",
         provider: "local-agent",
-        model: "gpt-5.3-codex-spark",
+        model: "gpt-5.5",
         timeout_ms: 900000,
         idle_timeout_ms: 300000,
         max_wall_timeout_ms: 900000
@@ -4611,6 +4687,88 @@ console.log(JSON.stringify({
   assert.equal(review.model_separation.required, false);
   assert.equal(review.model_separation.status, "not_required");
   assert.equal(review.policy.distinct_model_required, false);
+});
+
+test("semantic review accepts host timeout recovered candidate when reviewer times out", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-review-timeout-fallback-"));
+  const reviewCommand = join(home, "timeout-reviewer.js");
+  await writeFile(reviewCommand, `#!/usr/bin/env node
+console.log(JSON.stringify({
+  schema_version: "across-host-review-decision/1.0",
+  status: "failed",
+  status_code: 504,
+  error: "local agent codex timed out after 900.3s: idle_timeout"
+}));
+process.exit(1);
+`, "utf8");
+
+  const review = await semanticAlignmentReview({
+    spec: {
+      pack_config: {
+        semantic_review: {
+          minimum_validation_commands: 1,
+          require_distinct_model: false,
+          independent_reviewer_required: true
+        },
+        reviewer_model_policy: {
+          required: true,
+          agent_id: "codex",
+          provider: "local-agent",
+          model: "gpt-5.5",
+          require_distinct_from_builder: false
+        }
+      }
+    },
+    actions: [
+      {
+        adapter: "product_iteration_strategy",
+        result: {
+          selected_iteration: {
+            target_id: "autonomous-research-timeout-recovery",
+            allowed_patch_paths: [
+              "backend/src/across_agents_assistant/api_server.py",
+              "backend/src/across_agents_assistant/autopilot_research_timeout_recovery.py",
+              "backend/tests/test_autopilot_research_timeout_recovery.py"
+            ]
+          }
+        }
+      },
+      {
+        adapter: "host_code_iteration",
+        result: {
+          model_backed: false,
+          provider: "deterministic",
+          model: "host-validation-timeout-recovery",
+          host_validation_repair_fallback: true,
+          timeout_recovery: { kind: "local_agent_timeout", status_code: 504 },
+          summary: "Recovered from a local agent timeout by adding timeout diagnostics."
+        }
+      },
+      {
+        adapter: "candidate_ecosystem_diff",
+        result: {
+          changed_files: [
+            "across-agents-assistant/backend/src/across_agents_assistant/api_server.py",
+            "across-agents-assistant/backend/src/across_agents_assistant/autopilot_research_timeout_recovery.py",
+            "across-agents-assistant/backend/tests/test_autopilot_research_timeout_recovery.py"
+          ],
+          repos: []
+        }
+      },
+      {
+        adapter: "candidate_ecosystem_validation",
+        result: { status: "passed", commands: [{ status: "passed" }, { status: "passed" }] }
+      }
+    ],
+    env: { ...process.env, ACROSS_AAA_HOST_REVIEW_COMMAND: JSON.stringify(["node", reviewCommand]) }
+  });
+
+  assert.equal(review.status, "passed");
+  assert.equal(review.reviewer_independent, true);
+  assert.equal(review.reviewer_model_backed, false);
+  assert.equal(review.reviewer_timeout_recovery.kind, "local_agent_timeout");
+  assert.equal(review.model_separation.required, false);
+  assert.ok(review.warnings.some((warning) => warning.includes("timed out")));
 });
 
 test("orchestrator dispatch failure preserves evidence and does not patch candidate", async () => {
