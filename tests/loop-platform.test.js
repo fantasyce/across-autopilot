@@ -257,6 +257,34 @@ test("url source adapter times out stalled response bodies", async () => {
   }
 });
 
+test("url source adapter hard-times out response bodies that ignore abort", async () => {
+  const registry = new AdapterRegistry();
+  registerBuiltIns(registry);
+  const adapter = registry.getSource("url");
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    text: () => new Promise(() => {})
+  });
+  try {
+    await assert.rejects(
+      adapter.run({
+        spec: { id: "url-body-hard-timeout-test" },
+        source: { id: "abort-ignored-body", url: "https://example.invalid/abort-ignored-body", timeout_ms: 100 },
+        run: {}
+      }),
+      (error) => {
+        assert.equal(error.code, "source.unreachable");
+        assert.match(error.message, /timed out/);
+        return true;
+      }
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("url source adapter retries transient HTTP failures", async () => {
   const registry = new AdapterRegistry();
   registerBuiltIns(registry);
