@@ -71,9 +71,14 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.29`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.29` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.30`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.30` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.30` moves AAA self-iteration Codex policies to the locally visible
+`gpt-5.5` model and adds deterministic timeout-recovery evidence for builder
+and reviewer host calls, so a stalled local agent no longer turns the full loop
+into an opaque terminal failure.
 
 `v0.2.29` removes `codex-auto-review` from AAA self-iteration model candidates
 and gives research/review Codex calls a longer silent reasoning window after

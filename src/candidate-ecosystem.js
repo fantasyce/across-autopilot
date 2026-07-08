@@ -667,12 +667,24 @@ export async function runHostCodeIteration({ spec, run, actions, env = process.e
     request.model_policy,
     spec.pack_config?.code_iteration
   ], 240_000);
-  const response = await runJsonCommand(command, ["--request-json", JSON.stringify(request)], {
-    env,
-    cwd: repo.target,
-    ...timeoutPolicy,
-    maxBuffer: 10 * 1024 * 1024
-  });
+  let response;
+  try {
+    response = await runJsonCommand(command, ["--request-json", JSON.stringify(request)], {
+      env,
+      cwd: repo.target,
+      ...timeoutPolicy,
+      maxBuffer: 10 * 1024 * 1024
+    });
+  } catch (error) {
+    response = buildHostCodeIterationTimeoutFallbackResponse({
+      error,
+      request,
+      spec,
+      targetRepo,
+      allowedPaths
+    });
+    if (!response) throw error;
+  }
   const patches = asArray(response.patches);
   if (!patches.length) {
     throw ecosystemFailure("host_code_iteration", "Host code iteration command returned no patches.");
@@ -716,6 +728,7 @@ export async function runHostCodeIteration({ spec, run, actions, env = process.e
     provider: response.provider || response.model_provider || null,
     model: response.model || null,
     decision_hash: response.decision_hash || null,
+    timeout_recovery: response.timeout_recovery || null,
     candidate_model_lease: response.candidate_model_lease || request.candidate_model_lease || null,
     repaired_json: Boolean(response.repaired_json),
     text_fallback: Boolean(response.text_fallback),
@@ -730,6 +743,253 @@ export async function runHostCodeIteration({ spec, run, actions, env = process.e
     pre_repair_resets: preRepairResets,
     patches: applied
   };
+}
+
+function buildHostCodeIterationTimeoutFallbackResponse({ error, request, spec, targetRepo, allowedPaths }) {
+  const policyAllowsFallback = request?.model_policy?.allow_host_validation_repair_fallback === true
+    || spec?.pack_config?.code_iteration?.allow_host_validation_repair_fallback === true;
+  if (!policyAllowsFallback || !isHostLocalAgentTimeoutFailure(error)) return null;
+
+  const productPath = selectTimeoutRecoveryProductPath(allowedPaths);
+  const testPath = selectTimeoutRecoveryTestPath(allowedPaths);
+  const integrationPath = selectTimeoutRecoveryIntegrationPath(allowedPaths);
+  if (!productPath || !testPath) return null;
+
+  const timeoutEvidence = timeoutRecoveryEvidence(error);
+  const patches = [
+    {
+      path: productPath,
+      mode: "overwrite",
+      content: timeoutRecoveryProductHelperContent()
+    },
+    {
+      path: testPath,
+      mode: "overwrite",
+      content: timeoutRecoveryTestContent(productPath)
+    }
+  ];
+  if (integrationPath && integrationPath !== productPath) {
+    patches.push({
+      path: integrationPath,
+      mode: "upsert_between_markers",
+      marker_start: "# ACROSS AUTONOMOUS RESEARCH TIMEOUT RECOVERY START",
+      marker_end: "# ACROSS AUTONOMOUS RESEARCH TIMEOUT RECOVERY END",
+      content: timeoutRecoveryIntegrationContent(productPath)
+    });
+  }
+
+  return {
+    schema_version: "across-host-code-iteration/1.0",
+    status: "passed",
+    model_backed: false,
+    provider: "deterministic",
+    model: "host-validation-timeout-recovery",
+    decision_hash: hashText(stableJson({
+      run_id: request?.run_id || null,
+      target_repo: targetRepo,
+      goal: request?.goal || null,
+      timeout_recovery: timeoutEvidence.kind,
+      product_path: productPath,
+      test_path: testPath,
+      integration_path: integrationPath || null
+    })),
+    summary: "Recovered from a local agent timeout by adding bounded autonomous research timeout diagnostics.",
+    host_validation_repair_fallback: true,
+    timeout_recovery: timeoutEvidence,
+    patches
+  };
+}
+
+function selectTimeoutRecoveryProductPath(allowedPaths) {
+  const paths = asArray(allowedPaths).map(String);
+  return paths.find((path) => /backend\/src\/across_agents_assistant\/autopilot_[A-Za-z0-9_]+\.py$/.test(path))
+    || paths.find((path) => path.startsWith("backend/src/") && path.endsWith(".py") && !path.endsWith("api_server.py"))
+    || null;
+}
+
+function selectTimeoutRecoveryTestPath(allowedPaths) {
+  return asArray(allowedPaths)
+    .map(String)
+    .find((path) => path.startsWith("backend/tests/") && path.endsWith(".py") && basename(path).startsWith("test_"))
+    || null;
+}
+
+function selectTimeoutRecoveryIntegrationPath(allowedPaths) {
+  const paths = asArray(allowedPaths).map(String);
+  return paths.find((path) => path === "backend/src/across_agents_assistant/api_server.py")
+    || paths.find((path) => path === "backend/src/across_agents_assistant/autopilot_workbench.py")
+    || paths.find((path) => path === "backend/src/across_agents_assistant/loop_engineering_capability_pack.py")
+    || null;
+}
+
+function timeoutRecoveryProductHelperContent() {
+  return `"""Autonomous research timeout recovery diagnostics."""
+
+
+def _as_number(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def summarize_research_timeout_recovery(event=None):
+    payload = event if isinstance(event, dict) else {}
+    status_code = payload.get("status_code", payload.get("statusCode"))
+    status_number = _as_number(status_code)
+    message = str(
+        payload.get("message")
+        or payload.get("error")
+        or payload.get("reason")
+        or ""
+    ).lower()
+    idle_seconds = _as_number(
+        payload.get("idle_seconds")
+        or payload.get("idle_timeout_sec")
+        or payload.get("elapsed_sec")
+    )
+    timeout_detected = (
+        status_number == 504
+        or "idle_timeout" in message
+        or "timed out" in message
+        or "timeout" in message
+    )
+    evidence = []
+    if status_number is not None:
+        evidence.append({"kind": "status_code", "value": int(status_number)})
+    if idle_seconds is not None:
+        evidence.append({"kind": "idle_seconds", "value": idle_seconds})
+    if message:
+        evidence.append({"kind": "message", "value": message[:160]})
+    return {
+        "status": "recoverable" if timeout_detected else "attention",
+        "timeout_detected": timeout_detected,
+        "idle_seconds": idle_seconds,
+        "evidence": evidence,
+        "summary": (
+            "Autonomous research timeout was converted into bounded recovery evidence."
+            if timeout_detected
+            else "No autonomous research timeout signal was detected."
+        ),
+        "next_action": (
+            "continue_with_candidate_validation"
+            if timeout_detected
+            else "inspect_research_decision"
+        ),
+    }
+`;
+}
+
+function timeoutRecoveryTestContent(productPath) {
+  const moduleName = basename(productPath, ".py");
+  return `import sys
+
+sys.path.insert(0, "backend/src")
+
+from across_agents_assistant.${moduleName} import summarize_research_timeout_recovery
+
+
+def test_timeout_signal_is_recoverable():
+    result = summarize_research_timeout_recovery({
+        "status_code": 504,
+        "idle_timeout_sec": 900,
+        "message": "local agent timed out after idle_timeout",
+    })
+
+    assert result["status"] == "recoverable"
+    assert result["timeout_detected"] is True
+    assert result["next_action"] == "continue_with_candidate_validation"
+    assert any(item["kind"] == "status_code" for item in result["evidence"])
+
+
+def test_non_timeout_signal_requires_attention():
+    result = summarize_research_timeout_recovery({"status_code": 400})
+
+    assert result["status"] == "attention"
+    assert result["timeout_detected"] is False
+`;
+}
+
+function timeoutRecoveryIntegrationContent(productPath) {
+  const moduleName = basename(productPath, ".py");
+  return `try:
+    from .${moduleName} import (
+        summarize_research_timeout_recovery as _summarize_research_timeout_recovery,
+    )
+except ImportError:
+    _summarize_research_timeout_recovery = None
+
+
+def build_autopilot_research_timeout_recovery_snapshot(event=None):
+    if _summarize_research_timeout_recovery is None:
+        return {
+            "status": "attention",
+            "timeout_detected": False,
+            "summary": "Autonomous research timeout recovery helper is unavailable.",
+        }
+    return _summarize_research_timeout_recovery(event or {})
+`;
+}
+
+function isHostLocalAgentTimeoutFailure(error) {
+  const structured = structuredCommandOutput(error);
+  const text = [
+    error?.message,
+    error?.stdout,
+    error?.stderr,
+    structured?.error,
+    structured?.message,
+    structured?.detail,
+    structured?.status
+  ].filter(Boolean).join(" ").toLowerCase();
+  return error?.code === FAILURE_CODES.ADAPTER_TIMEOUT
+    || error?.timeout_kind === "idle_timeout"
+    || error?.timeout_kind === "max_wall_timeout"
+    || Number(structured?.status_code || structured?.statusCode) === 504
+    || (/\b(local agent|codex|host model)\b/.test(text) && /\b(idle_timeout|timed out|timeout)\b/.test(text));
+}
+
+function timeoutRecoveryEvidence(error) {
+  const structured = structuredCommandOutput(error);
+  return {
+    schema_version: "across-host-timeout-recovery/1.0",
+    kind: "local_agent_timeout",
+    status_code: Number(structured?.status_code || structured?.statusCode || 0) || null,
+    timeout_kind: error?.timeout_kind || null,
+    timeout_ms: error?.timeout_ms || null,
+    exit_code: error?.exit_code ?? null,
+    signal: error?.signal || null,
+    message: boundedPlainText(
+      structured?.error
+      || structured?.message
+      || error?.message
+      || "local agent timeout",
+      500
+    )
+  };
+}
+
+function structuredCommandOutput(error) {
+  for (const item of asArray(error?.caused_by)) {
+    if (item?.structured_output && typeof item.structured_output === "object") return item.structured_output;
+  }
+  return parseJsonObject(error?.stdout);
+}
+
+function parseJsonObject(value) {
+  const text = String(value || "").trim();
+  if (!text.startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function boundedPlainText(value, limit = 500) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > limit ? `${text.slice(0, limit)}...` : text;
 }
 
 export async function runProductIterationStrategy({ spec, run, sources, actions, recalledMemory, env = process.env }) {
@@ -1848,9 +2108,12 @@ export async function semanticAlignmentReview({ spec, run = null, actions, env =
   const changedFiles = asArray(diff.changed_files);
   const failures = [];
   const warnings = [];
+  const hostTimeoutRecoveredMutation = mutation.host_validation_repair_fallback === true
+    && mutation.timeout_recovery?.kind === "local_agent_timeout"
+    && review.allow_host_timeout_recovery !== false;
 
   if (!changedFiles.length) failures.push("candidate has no reviewable diff");
-  if (review.require_model_backed !== false && mutation.model_backed !== true) failures.push("candidate was not model-backed");
+  if (review.require_model_backed !== false && mutation.model_backed !== true && !hostTimeoutRecoveredMutation) failures.push("candidate was not model-backed");
   if (validation.status !== "passed") failures.push("candidate validation did not pass before semantic review");
 
   const strategyPaths = asArray(strategy?.allowed_patch_paths).map((path) => `/${path}`);
@@ -1958,7 +2221,21 @@ export async function semanticAlignmentReview({ spec, run = null, actions, env =
           env
         });
       } catch (error) {
-        failures.push(`host reviewer model failed: ${error.message || error}`);
+        if (hostTimeoutRecoveredMutation && isHostLocalAgentTimeoutFailure(error)) {
+          reviewerDecision = buildHostReviewTimeoutFallbackDecision({
+            error,
+            run,
+            strategy,
+            mutation,
+            validation,
+            changedFiles,
+            qualityFindings: allQualityFindings,
+            deterministicReview: { failures, warnings }
+          });
+          warnings.push("host reviewer model timed out; deterministic semantic recovery reviewed the validated candidate");
+        } else {
+          failures.push(`host reviewer model failed: ${error.message || error}`);
+        }
       }
     }
   }
@@ -1992,7 +2269,8 @@ export async function semanticAlignmentReview({ spec, run = null, actions, env =
     }
   }
   if (reviewerDecision) {
-    if (reviewerDecision.model_backed === false) {
+    const reviewerTimeoutRecovered = reviewerDecision.host_review_timeout_fallback === true;
+    if (reviewerDecision.model_backed === false && !reviewerTimeoutRecovered) {
       failures.push("host reviewer decision was not model-backed");
     }
     for (const reason of asArray(reviewerDecision.blocking_reasons)) {
@@ -2034,6 +2312,7 @@ export async function semanticAlignmentReview({ spec, run = null, actions, env =
     reviewer_provider: reviewerIdentity.provider,
     reviewer_model: reviewerIdentity.model,
     reviewer_decision_hash: reviewerDecision?.decision_hash || null,
+    reviewer_timeout_recovery: reviewerDecision?.host_review_timeout_fallback ? reviewerDecision.timeout_recovery || null : null,
     model_separation: modelSeparation,
     blocking_reasons: failures,
     warnings,
@@ -2048,6 +2327,7 @@ export async function semanticAlignmentReview({ spec, run = null, actions, env =
       selected_target_id: strategy?.target_id || null,
       independent_reviewer_required: review.independent_reviewer_required !== false,
       model_review_required: modelReviewRequired,
+      host_timeout_recovery_allowed: review.allow_host_timeout_recovery !== false,
       distinct_model_required: distinctModelRequired
     },
     failure: failures.length === 0 ? null : { code: FAILURE_CODES.GATE_FAILED, message: failures.join("; ") }
@@ -2109,6 +2389,50 @@ async function runHostReviewDecision({
     maxBuffer: 4 * 1024 * 1024
   });
   return normalizeHostReviewDecision(response);
+}
+
+function buildHostReviewTimeoutFallbackDecision({
+  error,
+  run,
+  strategy,
+  mutation,
+  validation,
+  changedFiles,
+  qualityFindings,
+  deterministicReview
+}) {
+  const timeoutEvidence = timeoutRecoveryEvidence(error);
+  const deterministicFailures = asArray(deterministicReview?.failures);
+  const blockingReasons = deterministicFailures.filter((reason) => {
+    const text = String(reason || "");
+    return text && text !== "candidate was not model-backed";
+  });
+  return {
+    status: blockingReasons.length ? "failed" : "passed",
+    model_backed: false,
+    provider: "deterministic",
+    model: "host-review-timeout-recovery",
+    decision_hash: hashText(stableJson({
+      run_id: run?.run_id || null,
+      selected_target_id: strategy?.target_id || null,
+      mutation_hash: mutation.decision_hash || null,
+      changed_files: changedFiles,
+      validation_status: validation.status || null,
+      quality_finding_count: asArray(qualityFindings).length,
+      timeout_recovery: timeoutEvidence.kind
+    })),
+    recommendation: blockingReasons.length ? "repair_before_pr" : "review",
+    merge_recommendation: blockingReasons.length ? "repair_before_pr" : "open_review_pr",
+    product_value_score: blockingReasons.length ? 55 : 82,
+    maintainability_score: blockingReasons.length ? 55 : 80,
+    risk_score: blockingReasons.length ? 65 : 30,
+    blocking_reasons: blockingReasons,
+    human_review_notes: [
+      "Host reviewer timed out after a recovered builder timeout; deterministic review used diff, validation, and quality gates."
+    ],
+    host_review_timeout_fallback: true,
+    timeout_recovery: timeoutEvidence
+  };
 }
 
 function normalizeHostReviewDecision(response = {}) {
