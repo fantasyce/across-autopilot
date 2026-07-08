@@ -126,6 +126,30 @@ test("AAA self-iteration specs use locally validated Codex model candidates", as
   }
 });
 
+test("AAA self-iteration specs do not use codex-auto-review as a primary model", async () => {
+  const specNames = [
+    "aaa-autonomous-self-iteration.loop.json",
+    "aaa-platform-self-repair.loop.json",
+    "aaa-research-driven-self-iteration.loop.json",
+    "aaa-self-iteration-product.loop.json"
+  ];
+
+  for (const name of specNames) {
+    const spec = JSON.parse(await readFile(join(process.cwd(), "examples", name), "utf8"));
+    const policies = [
+      spec.model_policy,
+      spec.pack_config?.model_policy,
+      spec.pack_config?.research_model_policy,
+      spec.pack_config?.builder_model_policy,
+      spec.pack_config?.reviewer_model_policy
+    ].filter(Boolean);
+    for (const policy of policies) {
+      if (policy.agent_id !== "codex") continue;
+      assert.notEqual(policy.model, "codex-auto-review", `${name} must not use codex-auto-review as primary`);
+    }
+  }
+});
+
 test("AAA self-iteration specs allow long silent Codex code generation", async () => {
   const specNames = [
     "aaa-autonomous-self-iteration.loop.json",
@@ -144,7 +168,7 @@ test("AAA self-iteration specs allow long silent Codex code generation", async (
     assert.ok(codeIteration.max_wall_timeout_ms >= 2_400_000, `${name} code iteration needs a bounded wall-clock budget`);
     assert.ok(builder.idle_timeout_ms >= 900_000, `${name} builder model policy must inherit the long code idle window`);
     assert.ok(research.idle_timeout_ms <= 300_000, `${name} research policy should still fail over quickly`);
-    assert.equal(research.model, "codex-auto-review", `${name} research should use the smoke-tested review model first`);
+    assert.equal(research.model, "gpt-5.3-codex-spark", `${name} research should use the smoke-tested Codex model first`);
     assert.equal(builder.model, "gpt-5.3-codex-spark", `${name} builder should use the smoke-tested Codex code model first`);
   }
 });
