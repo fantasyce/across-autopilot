@@ -1104,18 +1104,24 @@ async function fetchUrlRecord(url, extra = {}) {
 
 async function fetchUrlRecordOnce(url, extra = {}, { timeoutMs, attempt, attempts } = {}) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
+  const startedAt = Date.now();
+  const timeoutFailure = () => new LoopFailure({
+    code: FAILURE_CODES.SOURCE_UNREACHABLE,
+    failedState: "discovering_sources",
+    message: `Source request timed out after ${timeoutMs}ms (attempt ${attempt || 1}/${attempts || 1}).`,
+    retryable: true
+  });
   let response;
   let text;
   try {
-    response = await fetch(url, {
+    response = await withSourceTimeout(fetch(url, {
       headers: {
         "User-Agent": "AcrossAutopilot/1.0 (+https://github.com/fantasyce/across-autopilot)",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,text/markdown,text/plain;q=0.8,*/*;q=0.5",
         "Accept-Language": "en-US,en;q=0.8"
       },
       signal: controller.signal
-    });
+    }), { controller, timeoutMs, startedAt, timeoutFailure });
     if (!response.ok) {
       const retryable = response.status === 403 || response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500;
       throw new LoopFailure({
@@ -1125,7 +1131,7 @@ async function fetchUrlRecordOnce(url, extra = {}, { timeoutMs, attempt, attempt
         retryable
       });
     }
-    text = await response.text();
+    text = await withSourceTimeout(response.text(), { controller, timeoutMs, startedAt, timeoutFailure });
   } catch (error) {
     if (error instanceof LoopFailure) throw error;
     const timedOut = controller.signal.aborted;
@@ -1137,10 +1143,24 @@ async function fetchUrlRecordOnce(url, extra = {}, { timeoutMs, attempt, attempt
         : `Source request failed: ${String(error?.message || error).slice(0, 200)}.`,
       retryable: true
     });
+  }
+  return { ...extra, url, status_code: response.status, sha256: sha256(text), title: basename(url), excerpt: text.slice(0, 500) };
+}
+
+async function withSourceTimeout(promise, { controller, timeoutMs, startedAt, timeoutFailure }) {
+  const remainingMs = Math.max(1, timeoutMs - (Date.now() - startedAt));
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(timeoutFailure());
+    }, remainingMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
   } finally {
     clearTimeout(timer);
   }
-  return { ...extra, url, status_code: response.status, sha256: sha256(text), title: basename(url), excerpt: text.slice(0, 500) };
 }
 
 function sourceFetchOptions(source, kind) {
