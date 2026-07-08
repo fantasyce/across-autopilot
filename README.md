@@ -71,9 +71,13 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.21`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.21` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.22`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.22` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.22` hardens source discovery for autonomous self-iteration: URL source
+timeouts now cover both response headers and response body reads, so a stalled
+body stream cannot leave a run indefinitely parked in `discovering_sources`.
 
 `v0.2.21` makes cancellation and diagnosis reliable for long autonomous runs:
 supervised runs record their executor PID, cancel requests terminate the

@@ -223,6 +223,40 @@ test("url source adapter times out stalled fetches", async () => {
   }
 });
 
+test("url source adapter times out stalled response bodies", async () => {
+  const registry = new AdapterRegistry();
+  registerBuiltIns(registry);
+  const adapter = registry.getSource("url");
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, options = {}) => ({
+    ok: true,
+    status: 200,
+    text: () => new Promise((_, reject) => {
+      options.signal?.addEventListener("abort", () => {
+        const error = new Error("aborted body");
+        error.name = "AbortError";
+        reject(error);
+      }, { once: true });
+    })
+  });
+  try {
+    await assert.rejects(
+      adapter.run({
+        spec: { id: "url-body-timeout-test" },
+        source: { id: "stalled-body", url: "https://example.invalid/stalled-body", timeout_ms: 100 },
+        run: {}
+      }),
+      (error) => {
+        assert.equal(error.code, "source.unreachable");
+        assert.match(error.message, /timed out/);
+        return true;
+      }
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("url source adapter retries transient HTTP failures", async () => {
   const registry = new AdapterRegistry();
   registerBuiltIns(registry);

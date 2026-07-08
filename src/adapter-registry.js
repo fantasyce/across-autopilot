@@ -1106,6 +1106,7 @@ async function fetchUrlRecordOnce(url, extra = {}, { timeoutMs, attempt, attempt
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
   let response;
+  let text;
   try {
     response = await fetch(url, {
       headers: {
@@ -1115,7 +1116,18 @@ async function fetchUrlRecordOnce(url, extra = {}, { timeoutMs, attempt, attempt
       },
       signal: controller.signal
     });
+    if (!response.ok) {
+      const retryable = response.status === 403 || response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500;
+      throw new LoopFailure({
+        code: response.status === 429 ? FAILURE_CODES.SOURCE_RATE_LIMITED : FAILURE_CODES.SOURCE_UNREACHABLE,
+        failedState: "discovering_sources",
+        message: `Source request failed with ${response.status} (attempt ${attempt || 1}/${attempts || 1}).`,
+        retryable
+      });
+    }
+    text = await response.text();
   } catch (error) {
+    if (error instanceof LoopFailure) throw error;
     const timedOut = controller.signal.aborted;
     throw new LoopFailure({
       code: FAILURE_CODES.SOURCE_UNREACHABLE,
@@ -1128,16 +1140,6 @@ async function fetchUrlRecordOnce(url, extra = {}, { timeoutMs, attempt, attempt
   } finally {
     clearTimeout(timer);
   }
-  if (!response.ok) {
-    const retryable = response.status === 403 || response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500;
-    throw new LoopFailure({
-      code: response.status === 429 ? FAILURE_CODES.SOURCE_RATE_LIMITED : FAILURE_CODES.SOURCE_UNREACHABLE,
-      failedState: "discovering_sources",
-      message: `Source request failed with ${response.status} (attempt ${attempt || 1}/${attempts || 1}).`,
-      retryable
-    });
-  }
-  const text = await response.text();
   return { ...extra, url, status_code: response.status, sha256: sha256(text), title: basename(url), excerpt: text.slice(0, 500) };
 }
 
