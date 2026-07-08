@@ -855,6 +855,70 @@ test("candidate validation rejects undefined AAA backend top-level runtime names
   assert.match(smoke.stderr, /undefined AAA backend top-level reference\(s\).*api_server\.py:_app/);
 });
 
+test("candidate validation smokes AAA product entrypoint calls", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-aaa-entrypoint-smoke-"));
+  const sourceRoot = join(home, "sources");
+  const repos = [];
+  for (const id of ["across-agents-assistant", "across-orchestrator", "across-context", "across-autopilot"]) {
+    const source = join(sourceRoot, id);
+    await createGitSource(source, id === "across-agents-assistant" ? {
+      "README.md": "# AAA\n",
+      "backend/src/across_agents_assistant/__init__.py": "",
+      "backend/src/across_agents_assistant/api_server.py": "APP_READY = True\n",
+      "backend/src/across_agents_assistant/autopilot_workbench.py": "def build_autopilot_workbench_snapshot(**kwargs):\n    return {'summary': {}, 'sections': {}}\n",
+      "backend/src/across_agents_assistant/autopilot_tool_pack_registry.py": "def tool_pack_registry_snapshot():\n    return {'status': 'passed'}\n",
+      "backend/src/across_agents_assistant/loop_engineering_capability_pack.py": "def loop_engineering_capability_pack(source_signals=None):\n    return {'status': 'source'}\n"
+    } : {
+      "README.md": `# ${id}\n`
+    });
+    repos.push({ id, source });
+  }
+
+  const spec = {
+    id: "aaa-entrypoint-smoke",
+    pack_config: {
+      target_repo: "across-agents-assistant",
+      candidate_ecosystem: { repos },
+      candidate_validation: { commands: [] }
+    }
+  };
+  const run = { run_id: "run-aaa-entrypoint-smoke" };
+  const env = { ...process.env, ACROSS_HOME: home };
+  const acquired = await acquireCandidateEcosystem({ spec, run, env });
+  const aaaTarget = acquired.repos.find((repo) => repo.id === "across-agents-assistant").target;
+  await writeFile(
+    join(aaaTarget, "backend", "src", "across_agents_assistant", "loop_engineering_capability_pack.py"),
+    "def loop_engineering_capability_pack(source_signals=None):\n"
+      + "    from .autopilot_tool_pack_registry import tool_pack_registry_snapshot\n"
+      + "    return {'tool_pack_registry': tool_pack_registry_snapshot(['unexpected'])}\n",
+    "utf8"
+  );
+
+  const diff = await candidateEcosystemDiff({
+    spec,
+    run,
+    actions: [{ adapter: "candidate_ecosystem_acquire", result: acquired }],
+    env
+  });
+  const validated = await validateCandidateEcosystem({
+    spec,
+    run,
+    actions: [
+      { adapter: "candidate_ecosystem_acquire", result: acquired },
+      { adapter: "candidate_ecosystem_diff", result: diff }
+    ],
+    env
+  });
+  const smoke = validated.commands.find((command) => (
+    command.implicit && command.summary === "AAA backend product entrypoint smoke"
+  ));
+
+  assert.equal(validated.status, "attention");
+  assert.ok(smoke);
+  assert.equal(smoke.status, "failed");
+  assert.match(smoke.stderr, /TypeError|positional argument/);
+});
+
 test("candidate ecosystem product snapshot preserves executable root files", async () => {
   const home = await mkdtemp(join(tmpdir(), "across-autopilot-product-file-mode-"));
   const previousEnv = snapshotEnv(["ACROSS_AUTOPILOT_PRODUCT_MODE"]);
@@ -3393,7 +3457,20 @@ test("host code iteration applies marker upsert patches idempotently", async () 
   const repo = join(home, "candidate", "across-agents-assistant");
   const rel = "backend/src/across_agents_assistant/autopilot_workbench.py";
   await mkdir(dirname(join(repo, rel)), { recursive: true });
-  await writeFile(join(repo, rel), "def existing_workbench():\n    return 'ok'\n", "utf8");
+  await writeFile(
+    join(repo, rel),
+    "def existing_workbench():\n"
+      + "    return 'ok'\n\n"
+      + "# ACROSS ITERATION TELEMETRY START\n"
+      + "def stale_iteration_telemetry_snapshot():\n"
+      + "    return {'status': 'stale'}\n"
+      + "# ACROSS ITERATION TELEMETRY END\n"
+      + "# ACROSS ITERATION TELEMETRY START\n"
+      + "def broken_iteration_telemetry_snapshot():\n"
+      + "    return {'status': 'broken'}\n"
+      + "# ACROSS ITERATION TELEMETRY END\n",
+    "utf8"
+  );
 
   const command = join(home, "host-code-upsert.js");
   await writeFile(command, `#!/usr/bin/env node
@@ -3453,6 +3530,8 @@ console.log(JSON.stringify({
   const content = await readFile(join(repo, rel), "utf8");
   assert.match(content, /def existing_workbench/);
   assert.match(content, /def build_iteration_telemetry_snapshot/);
+  assert.doesNotMatch(content, /stale_iteration_telemetry_snapshot/);
+  assert.doesNotMatch(content, /broken_iteration_telemetry_snapshot/);
   assert.equal((content.match(/ACROSS ITERATION TELEMETRY START/g) || []).length, 1);
   assert.equal((content.match(/ACROSS ITERATION TELEMETRY END/g) || []).length, 1);
 });
