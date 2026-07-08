@@ -90,7 +90,7 @@ function runCommandWithActivityTimeout(bin, args, options = {}) {
     };
     const timer = setInterval(() => {
       const now = Date.now();
-      if (maxWallTimeoutMs > 0 && now - startedAt > maxWallTimeoutMs) {
+      if (maxWallTimeoutMs > 0 && now - lastActivityAt > maxWallTimeoutMs) {
         killForTimeout("max_wall_timeout");
       } else if (idleTimeoutMs > 0 && now - lastActivityAt > idleTimeoutMs) {
         killForTimeout("idle_timeout");

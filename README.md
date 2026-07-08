@@ -71,9 +71,13 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.25`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.25` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.26`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.26` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.26` treats active stdout/stderr streaming as progress for host command
+wall-timeout windows, so complex agent calls are not killed while they continue
+to emit activity.
 
 `v0.2.25` collapses duplicate marker-upsert blocks during candidate repairs and
 adds implicit AAA product-entrypoint smoke validation for workbench and
