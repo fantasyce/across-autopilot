@@ -333,6 +333,34 @@ if missing:
     raise NameError("undefined AAA backend top-level reference(s): " + ", ".join(sorted(set(missing))))
 print("AAA backend top-level name contract OK", checked)`;
 
+const AAA_BACKEND_PRODUCT_ENTRYPOINT_SMOKE = `from across_agents_assistant.autopilot_workbench import build_autopilot_workbench_snapshot
+from across_agents_assistant.loop_engineering_capability_pack import loop_engineering_capability_pack
+
+observed = {
+    "tool_packs": [
+        "trigger_ingestion",
+        "source_research_digest",
+        "model_target_admission",
+        "candidate_workspace",
+        "validation_harness",
+        "independent_review",
+        "promotion_attestation",
+    ]
+}
+snapshot = build_autopilot_workbench_snapshot(self_iteration_plan=observed)
+if not isinstance(snapshot, dict):
+    raise AssertionError("build_autopilot_workbench_snapshot did not return a dict")
+sections = snapshot.get("sections") or {}
+if "tool_pack_contract" in sections and sections["tool_pack_contract"].get("status") != "passed":
+    raise AssertionError("tool_pack_contract workbench section did not pass with complete observed packs")
+pack = loop_engineering_capability_pack(observed)
+if not isinstance(pack, dict):
+    raise AssertionError("loop_engineering_capability_pack did not return a dict")
+contract = pack.get("tool_pack_contract")
+if contract and contract.get("promotion_requires_human_review") is not True:
+    raise AssertionError("tool_pack_contract must remain human-review gated")
+print("AAA backend product entrypoint smoke OK")`;
+
 const SNAPSHOT_ROOTS_BY_REPO = Object.freeze({
   "across-agents-assistant": [
     "backend/src",
@@ -1351,11 +1379,15 @@ function implicitCandidateValidationCommands({ actions = [], repos = [] } = {}) 
   if (!aaaRepo?.target) return [];
   if (!candidateTouchesAaaBackendRuntime(changedFiles)) return [];
   if (!existsSync(join(aaaRepo.target, "backend", "src", "across_agents_assistant", "api_server.py"))) return [];
-  return [
+  const commands = [
     aaaBackendApiImportSmokeCommand(changedFiles),
     aaaBackendTopLevelNameSmokeCommand(changedFiles),
     aaaBackendRuntimeDependencyImportSmokeCommand(changedFiles)
   ];
+  if (candidateTouchesAaaProductEntrypoints(changedFiles)) {
+    commands.push(aaaBackendProductEntrypointSmokeCommand());
+  }
+  return commands;
 }
 
 function candidateTouchesAaaBackendRuntime(changedFiles) {
@@ -1364,6 +1396,15 @@ function candidateTouchesAaaBackendRuntime(changedFiles) {
     return value === "across-agents-assistant/backend/main.py"
       || value === "across-agents-assistant/backend/build.py"
       || value.startsWith("across-agents-assistant/backend/src/across_agents_assistant/");
+  });
+}
+
+function candidateTouchesAaaProductEntrypoints(changedFiles) {
+  return asArray(changedFiles).some((file) => {
+    const value = String(file || "");
+    return value === "across-agents-assistant/backend/src/across_agents_assistant/autopilot_workbench.py"
+      || value === "across-agents-assistant/backend/src/across_agents_assistant/loop_engineering_capability_pack.py"
+      || value === "across-agents-assistant/backend/src/across_agents_assistant/autopilot_tool_pack_registry.py";
   });
 }
 
@@ -1427,6 +1468,17 @@ function aaaBackendRuntimeDependencyImportSmokeCommand(changedFiles) {
     timeout_ms: 60000,
     implicit: true,
     summary: "AAA backend runtime dependency import contract smoke"
+  };
+}
+
+function aaaBackendProductEntrypointSmokeCommand() {
+  return {
+    repo: "across-agents-assistant",
+    command: "python3",
+    args: ["-c", AAA_BACKEND_PRODUCT_ENTRYPOINT_SMOKE],
+    timeout_ms: 60000,
+    implicit: true,
+    summary: "AAA backend product entrypoint smoke"
   };
 }
 
@@ -3412,8 +3464,8 @@ function applyCandidatePatch(before, patch, rel) {
   }
   const block = `${markerStart}\n${content.trimEnd()}\n${markerEnd}\n`;
   const startIndex = before.indexOf(markerStart);
-  const endIndex = before.indexOf(markerEnd, startIndex >= 0 ? startIndex + markerStart.length : 0);
-  if (startIndex >= 0 && endIndex >= 0) {
+  const endIndex = before.lastIndexOf(markerEnd);
+  if (startIndex >= 0 && endIndex >= startIndex) {
     const afterEnd = endIndex + markerEnd.length;
     const prefix = before.slice(0, startIndex);
     const suffix = before.slice(afterEnd).replace(/^\n?/, "");

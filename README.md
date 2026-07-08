@@ -71,9 +71,13 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.24`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.24` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.25`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.25` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.25` collapses duplicate marker-upsert blocks during candidate repairs and
+adds implicit AAA product-entrypoint smoke validation for workbench and
+capability-pack changes, so semantic-review failures become validation feedback.
 
 `v0.2.24` updates AAA self-iteration LoopSpecs to use locally smoke-tested Codex
 models by role: `codex-auto-review` for research/review and
