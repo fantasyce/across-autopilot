@@ -71,9 +71,13 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.23`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.23` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.24`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.24` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.24` updates AAA self-iteration LoopSpecs to use locally smoke-tested Codex
+models by role: `codex-auto-review` for research/review and
+`gpt-5.3-codex-spark` for code generation.
 
 `v0.2.23` adds explicit hard-deadline races around URL source fetches and body
 reads, so source discovery still times out if the underlying fetch or stream
