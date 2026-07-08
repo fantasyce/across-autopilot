@@ -71,9 +71,15 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.19`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.19` tag as a managed Across plugin, and the npm package
+The current release is `v0.2.20`. It is source-first and GitHub-first: hosts can
+install it from the `v0.2.20` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.2.20` hardens AAA autonomous code iteration for complex local Codex runs:
+the code-iteration operation timeout now propagates into the builder model
+policy, built-in self-iteration specs allow long silent code generation without
+removing max-wall guardrails, and end-to-end self-iteration budgets cover
+research, build, validation, app lifecycle, and review.
 
 `v0.2.19` hardens AAA self-iteration for long-running local agent work: host
 commands refresh idle timeouts on real stdout/stderr activity, keep a max-wall

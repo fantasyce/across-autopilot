@@ -4032,6 +4032,78 @@ test("candidate diff flags isolated helper and test without product integration"
   assert.ok(review.blocking_reasons.some((reason) => reason.includes("unintegrated_candidate_helper")));
 });
 
+test("host code iteration passes operation timeout policy to builder model request", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-code-timeout-policy-"));
+  const repo = join(home, "candidate", "across-agents-assistant");
+  await mkdir(repo, { recursive: true });
+  await writeFile(join(repo, "README.md"), "# Candidate\n", "utf8");
+  const command = join(home, "host-code-timeout-policy.js");
+  await writeFile(command, `#!/usr/bin/env node
+const request = JSON.parse(process.argv[process.argv.indexOf("--request-json") + 1]);
+const policy = request.model_policy || {};
+if (policy.timeout_ms !== 2400000 || policy.idle_timeout_ms !== 900000 || policy.max_wall_timeout_ms !== 2400000) {
+  console.error(JSON.stringify({ policy }));
+  process.exit(1);
+}
+console.log(JSON.stringify({
+  schema_version: "across-host-code-iteration/1.0",
+  status: "passed",
+  model_backed: true,
+  provider: policy.provider,
+  model: policy.model,
+  decision_hash: "timeout-policy",
+  summary: "Append timeout policy proof.",
+  patches: [{ path: "README.md", mode: "append", content: "\\nTimeout policy propagated.\\n" }]
+}));
+`, "utf8");
+
+  const spec = {
+    id: "timeout-policy-test",
+    pack_config: {
+      target_repo: "across-agents-assistant",
+      builder_model_policy: {
+        agent_id: "codex",
+        provider: "local-agent",
+        model: "gpt-5.5",
+        timeout_ms: 900000,
+        idle_timeout_ms: 300000,
+        max_wall_timeout_ms: 900000
+      },
+      code_iteration: {
+        command: JSON.stringify(["node", command]),
+        allowed_patch_paths: ["README.md"],
+        timeout_ms: 2400000,
+        idle_timeout_ms: 900000,
+        max_wall_timeout_ms: 2400000
+      }
+    }
+  };
+  const actions = [
+    {
+      adapter: "candidate_ecosystem_acquire",
+      result: { repos: [{ id: "across-agents-assistant", target: repo }], model_lease: {} }
+    },
+    {
+      adapter: "product_iteration_strategy",
+      result: {
+        selected_iteration: {
+          target_id: "timeout-policy",
+          target_repo: "across-agents-assistant",
+          goal: "Verify operation timeout policy.",
+          allowed_patch_paths: ["README.md"],
+          validation_commands: []
+        }
+      }
+    }
+  ];
+
+  const result = await runHostCodeIteration({ spec, run: { run_id: "run-timeout-policy" }, actions, env: process.env });
+
+  assert.equal(result.status, "passed");
+  assert.equal(result.model_backed, true);
+  assert.match(await readFile(join(repo, "README.md"), "utf8"), /Timeout policy propagated/);
+});
+
 test("candidate diff blocks destructive product entrypoint rewrites before app lifecycle", async () => {
   const home = await mkdtemp(join(tmpdir(), "across-autopilot-entrypoint-rewrite-"));
   const repo = join(home, "across-agents-assistant");

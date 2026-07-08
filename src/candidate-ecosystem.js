@@ -391,6 +391,39 @@ function modelPolicyForRole(spec, role) {
   };
 }
 
+const MODEL_TIMEOUT_POLICY_KEYS = Object.freeze([
+  "timeout_ms",
+  "timeoutMs",
+  "timeout_seconds",
+  "timeout_sec",
+  "timeout",
+  "idle_timeout_ms",
+  "idleTimeoutMs",
+  "activity_timeout_ms",
+  "activityTimeoutMs",
+  "no_progress_timeout_ms",
+  "noProgressTimeoutMs",
+  "idle_timeout_seconds",
+  "activity_timeout_seconds",
+  "no_progress_timeout_seconds",
+  "max_wall_timeout_ms",
+  "maxWallTimeoutMs",
+  "absolute_timeout_ms",
+  "absoluteTimeoutMs"
+]);
+
+function builderModelPolicyForCodeIteration(spec) {
+  const policy = { ...modelPolicyForRole(spec, "builder") };
+  const codeIteration = spec.pack_config?.code_iteration;
+  if (!codeIteration || typeof codeIteration !== "object") return policy;
+  for (const key of MODEL_TIMEOUT_POLICY_KEYS) {
+    if (codeIteration[key] !== undefined && codeIteration[key] !== null && String(codeIteration[key]).trim() !== "") {
+      policy[key] = codeIteration[key];
+    }
+  }
+  return policy;
+}
+
 function modelIdentity(provider, model) {
   const providerText = String(provider || "").trim();
   const modelText = String(model || "").trim();
@@ -588,7 +621,7 @@ export async function runHostCodeIteration({ spec, run, actions, env = process.e
     validation_commands: asArray(strategy?.validation_commands || spec.pack_config?.candidate_validation?.commands || spec.pack_config?.validation_commands),
     validation_feedback: validationFeedbackForCodeIteration(actions),
     candidate_model_lease: requestCandidateModelLease(acquire?.model_lease),
-    model_policy: modelPolicyForRole(spec, "builder")
+    model_policy: builderModelPolicyForCodeIteration(spec)
   };
   const preRepairResets = await restoreDestructiveEntryPointRewrites({
     repo,

@@ -101,6 +101,27 @@ test("AAA self-iteration specs do not carry unsupported Codex model fallbacks", 
   }
 });
 
+test("AAA self-iteration specs allow long silent Codex code generation", async () => {
+  const specNames = [
+    "aaa-autonomous-self-iteration.loop.json",
+    "aaa-research-driven-self-iteration.loop.json"
+  ];
+
+  for (const name of specNames) {
+    const spec = JSON.parse(await readFile(join(process.cwd(), "examples", name), "utf8"));
+    const timeouts = spec.runtime_policy?.timeouts || {};
+    const codeIteration = spec.pack_config?.code_iteration || {};
+    const builder = spec.pack_config?.builder_model_policy || spec.pack_config?.model_policy || {};
+    const research = spec.pack_config?.research_model_policy || spec.pack_config?.model_policy || {};
+
+    assert.ok(timeouts.total_run_timeout_ms >= 7_200_000, `${name} must budget complex self-iteration end to end`);
+    assert.ok(codeIteration.idle_timeout_ms >= 900_000, `${name} code iteration idle timeout must allow silent Codex work`);
+    assert.ok(codeIteration.max_wall_timeout_ms >= 2_400_000, `${name} code iteration needs a bounded wall-clock budget`);
+    assert.ok(builder.idle_timeout_ms >= 900_000, `${name} builder model policy must inherit the long code idle window`);
+    assert.ok(research.idle_timeout_ms <= 300_000, `${name} research policy should still fail over quickly`);
+  }
+});
+
 test("host-plugin install writes wrapper and manifest", async () => {
   const acrossHome = await mkdtemp(join(tmpdir(), "across-autopilot-install-"));
   const env = { ...process.env, ACROSS_HOME: acrossHome };

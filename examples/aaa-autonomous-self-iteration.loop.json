@@ -209,9 +209,9 @@
     "runtime_policy": {
       "risk_profile": "high",
       "timeouts": {
-        "total_run_timeout_ms": 3600000,
-        "adapter_timeout_ms": 1800000,
-        "model_timeout_ms": 1800000
+        "total_run_timeout_ms": 7200000,
+        "adapter_timeout_ms": 2400000,
+        "model_timeout_ms": 2400000
       },
     "budget": {
       "max_model_calls": 12,
@@ -311,9 +311,9 @@
       }
     },
     "code_iteration": {
-      "timeout_ms": 1500000,
-      "idle_timeout_ms": 300000,
-      "max_wall_timeout_ms": 1500000
+      "timeout_ms": 2400000,
+      "idle_timeout_ms": 900000,
+      "max_wall_timeout_ms": 2400000
     },
     "semantic_review": {
       "independent_reviewer_required": true,
@@ -352,9 +352,9 @@
       "allow_host_validation_repair_fallback": true,
       "temperature": 0.2,
       "max_tokens": 8192,
-      "timeout_ms": 900000,
-      "idle_timeout_ms": 300000,
-      "max_wall_timeout_ms": 900000
+      "timeout_ms": 2400000,
+      "idle_timeout_ms": 900000,
+      "max_wall_timeout_ms": 2400000
     },
     "reviewer_model_policy": {
       "required": true,
