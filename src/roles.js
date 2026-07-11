@@ -10,6 +10,7 @@ const ROLE_BY_ADAPTER = Object.freeze({
   candidate_app_lifecycle: "validator",
   candidate_self_hosting_probe: "validator",
   semantic_alignment_review: "reviewer",
+  repo_push_gate: "release_gate",
   quality_gate_evaluation: "supervisor",
   promotion_report_generation: "release_gate",
   report_generation: "reporter",

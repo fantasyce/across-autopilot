@@ -1,0 +1,116 @@
+{
+  "schema_version": "across-autopilot-gate-config/1.0",
+  "id": "across-autopilot-default",
+  "network_policy": "none",
+  "github_remote": {
+    "enabled": false,
+    "repository": null,
+    "allowed_hosts": ["github.com"],
+    "allowed_operations": [],
+    "allowed_push_refs": [],
+    "verification_mode": "auto",
+    "require_draft": true,
+    "approval_token_env": "ACROSS_REPO_GATE_APPROVAL_TOKEN",
+    "approval_token_sha256": null,
+    "auth_token_env": "GH_TOKEN"
+  },
+  "checks": [
+    {
+      "id": "javascript-syntax",
+      "category": "lint",
+      "argv": ["node", "--check", "src/cli.js"],
+      "required": true,
+      "timeout_ms": 30000,
+      "repair": {
+        "strategy": "auto",
+        "suggested_action": "Repair JavaScript syntax and rerun the baseline check."
+      }
+    },
+    {
+      "id": "gate-contract-tests",
+      "category": "test",
+      "argv": ["node", "--test", "tests/findings.test.js", "tests/repo-gate.test.js"],
+      "required": true,
+      "timeout_ms": 120000
+    },
+    {
+      "id": "documentation-contract",
+      "category": "docs",
+      "argv": ["node", "--test", "tests/docs.test.js"],
+      "required": true,
+      "timeout_ms": 60000,
+      "repair": {
+        "strategy": "plan",
+        "suggested_action": "Update gate documentation and rerun the baseline docs contract."
+      }
+    },
+    {
+      "id": "review-contract",
+      "category": "review",
+      "argv": ["node", "--test", "tests/review.test.js"],
+      "required": true,
+      "timeout_ms": 60000
+    }
+  ],
+  "tools": [
+    {
+      "id": "gitleaks",
+      "category": "secret_scan",
+      "argv": ["gitleaks", "git", ".", "--redact", "--no-banner"],
+      "required": false,
+      "timeout_ms": 60000
+    },
+    {
+      "id": "semgrep",
+      "category": "sast",
+      "argv": ["semgrep", "scan", "--config", "auto", "--metrics", "off", "--disable-version-check", "--error", "--json", "."],
+      "required": false,
+      "network_required": true,
+      "timeout_ms": 120000
+    },
+    {
+      "id": "syft",
+      "category": "sbom",
+      "argv": ["syft", "dir:.", "--output", "cyclonedx-json"],
+      "required": false,
+      "timeout_ms": 120000
+    },
+    {
+      "id": "osv-scanner",
+      "category": "vulnerability",
+      "argv": ["osv-scanner", "scan", "source", "--format", "json", "--recursive", "."],
+      "required": false,
+      "network_required": true,
+      "timeout_ms": 120000
+    }
+  ],
+  "budget": {
+    "max_commands": 8,
+    "max_total_timeout_ms": 420000,
+    "max_diff_bytes": 2000000,
+    "max_changed_files": 250,
+    "max_findings": 200,
+    "max_output_bytes": 64000,
+    "max_repair_actions": 4,
+    "max_repair_rounds": 2
+  },
+  "ci": {
+    "required": false,
+    "expected_checks": ["lint", "test", "docs", "review"]
+  },
+  "policies": {
+    "dirty_tree": "block",
+    "base_must_be_ancestor": true,
+    "codeowners": {
+      "required": false,
+      "require_changed_file_coverage": false
+    },
+    "generated_files": {
+      "mode": "block_unpaired",
+      "patterns": ["**/*.generated.*", "**/dist/**", "**/generated/**", "package-lock.json"]
+    },
+    "vulnerability": {
+      "required_tool": false
+    }
+  }
+}

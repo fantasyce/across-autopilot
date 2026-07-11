@@ -4,14 +4,14 @@
   "name": "Across Autopilot",
   "category": "loop supervisor",
   "tagline": "Turn repeat engineering work into supervised LoopSpec runs.",
-  "summary": "Across Autopilot validates LoopSpecs, supervises workflow runs, negotiates adapters, records repair evidence, and produces readiness or promotion reports for coding-agent workflows.",
+  "summary": "Across Autopilot validates LoopSpecs, supervises workflow runs, negotiates adapters, records repair evidence, gates repositories, and can run an explicitly approved draft GitHub PR/Checks/CI loop without owning merge authority.",
   "part_of": "Across",
   "repository": "fantasyce/across-autopilot",
   "current_release": {
-    "version": "v0.2.30",
-    "published_at": "2026-07-08",
-    "tag": "v0.2.30",
-    "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.2.30"
+    "version": "v0.3.0",
+    "published_at": "2026-07-11",
+    "tag": "v0.3.0",
+    "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.3.0"
   },
   "role": "workflow supervisor",
   "hosts": [
@@ -29,6 +29,8 @@
     "across-async-task/1.0 projection",
     "adapter negotiation",
     "retry and repair evidence",
+    "baseline-trusted Git and PR quality gate receipts",
+    "approval-controlled feature branch push, draft GitHub PR, Checks, comments, and CI watching",
     "candidate workspace policy",
     "promotion reports",
     "evidence integrity",
@@ -43,6 +45,13 @@
     "default release authority"
   ],
   "primary_workflows": [
+    {
+      "id": "repo-push-gate",
+      "name": "Repository Push Gate",
+      "command": "across-autopilot gate --repo . --base-ref origin/main --head-ref HEAD --max-repairs 2 --json",
+      "approved_remote_command": "across-autopilot gate --repo . --base-ref origin/main --head-ref HEAD --push-branch --draft-pr --approve-remote --watch-ci true --json",
+      "model_calls_required": false
+    },
     {
       "id": "repo-quality-copilot",
       "name": "Repository Quality Copilot",

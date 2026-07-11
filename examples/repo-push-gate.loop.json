@@ -1,0 +1,154 @@
+{
+  "schema_version": "across-loop-spec/1.0",
+  "id": "repo-push-gate",
+  "name": "Repository Push Gate",
+  "description": "Bind a Git branch and diff to baseline-trusted checks, normalized findings, a deterministic receipt, and an optional approval-controlled exact feature-branch push plus draft GitHub PR/CI loop.",
+  "owner": {
+    "type": "local_user",
+    "id": "default"
+  },
+  "compatibility": {
+    "min_autopilot_version": ">=0.3.0",
+    "required_orchestrator": ">=0.7.3",
+    "required_context": ">=0.8.3",
+    "required_host": ">=0.9.3"
+  },
+  "required_capabilities": [
+    "source.directory",
+    "action.repo_push_gate",
+    "action.quality_gate_evaluation",
+    "output.markdown_report",
+    "output.json_artifact",
+    "memory.pending_summary"
+  ],
+  "trigger": {
+    "type": "manual"
+  },
+  "scope": {
+    "project_id": "repo-push-gate",
+    "workspace": "."
+  },
+  "autonomy": {
+    "level": 4,
+    "requires_human_approval_above": 2
+  },
+  "sources": [
+    {
+      "id": "repository",
+      "type": "directory",
+      "adapter": "directory",
+      "path": ".",
+      "max_files": 200
+    }
+  ],
+  "actions": {
+    "allowed": [
+      "file_read",
+      "git_read",
+      "repo_push_gate",
+      "pull_request_draft",
+      "quality_gate_evaluation",
+      "report_generation",
+      "write_pending_memory"
+    ],
+    "blocked": [
+      "merge_pr",
+      "release_publish",
+      "sign_artifact",
+      "write_secret"
+    ]
+  },
+  "execute": {
+    "engine": "across-orchestrator",
+    "mode": "task"
+  },
+  "outputs": [
+    {
+      "type": "markdown_report",
+      "to": "run://repo-push-gate/report.md",
+      "policy": "create"
+    },
+    {
+      "type": "json_artifact",
+      "to": "run://repo-push-gate/evidence.json",
+      "policy": "overwrite"
+    },
+    {
+      "type": "context_memory",
+      "to": "context://pending",
+      "policy": "append"
+    }
+  ],
+  "gates": [
+    {
+      "id": "source_reachable",
+      "required": true
+    },
+    {
+      "id": "repo_push_gate_passed",
+      "required": true
+    }
+  ],
+  "memory": {
+    "provider": "across-context",
+    "recall": true,
+    "remember": true,
+    "write_status": "pending"
+  },
+  "failure_policy": {
+    "max_retries": 0,
+    "retry_backoff": "linear",
+    "continue_on_gate_failure": false,
+    "dead_letter": "context_memory"
+  },
+  "sandbox": {
+    "filesystem": "read_only",
+    "network": "allowlist:github.com,api.github.com",
+    "env": "minimal"
+  },
+  "evidence_contract": {
+    "schema_version": "across-loop-evidence/1.0",
+    "required_sections": ["sources", "actions", "gates", "outputs", "memory", "audit"]
+  },
+  "used_adapters": {
+    "sources": ["directory"],
+    "actions": [
+      "repo_push_gate",
+      "quality_gate_evaluation",
+      "report_generation",
+      "memory_write_candidate"
+    ],
+    "outputs": ["markdown_report", "json_artifact", "context_memory"]
+  },
+  "pack_config": {
+    "workflow_pack_id": "repo-push-gate",
+    "repo_push_gate": {
+      "repository": ".",
+      "base_ref": "HEAD",
+      "head_ref": "HEAD",
+      "config_path": ".across/repo-push-gate.json",
+      "max_repairs": 0,
+      "push_branch": false,
+      "draft_pr": false,
+      "approve_remote": false,
+      "watch_ci": true,
+      "ci_poll_ms": 5000,
+      "ci_idle_timeout_ms": 900000,
+      "ci_max_wall_timeout_ms": 7200000,
+      "ci_max_log_bytes": 16384
+    },
+    "runtime_policy": {
+      "risk_profile": "release",
+      "network_policy": {
+        "mode": "allowlist",
+        "allowlist": ["github.com", "api.github.com"]
+      },
+      "filesystem_policy": "read_only",
+      "budget": {
+        "max_model_calls": 0,
+        "max_candidate_repairs": 0,
+        "max_usd": 0
+      }
+    }
+  }
+}

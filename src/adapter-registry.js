@@ -16,7 +16,10 @@ import {
   validateCandidateEcosystem
 } from "./candidate-ecosystem.js";
 import { FAILURE_CODES, LoopFailure } from "./failures.js";
+import { buildPushReceipt, normalizeQualityFindings } from "./findings.js";
 import { asArray, stableJson, unique } from "./json-utils.js";
+import { renderGateMarkdown } from "./repo-gate.js";
+import { runRepoPushGateWithGitHub } from "./github-remote.js";
 import { listToolPacks } from "./tool-packs.js";
 import { roleForAdapter } from "./roles.js";
 import { discoverExternalSkills } from "./skill-radar.js";
@@ -110,7 +113,7 @@ export function registerBuiltIns(registry) {
   for (const id of ["file", "directory", "url", "rss", "github_repo", "github_search", "package_registry", "manual_input", "trigger_payload", "external_skills_radar"]) {
     registry.registerSource(sourceAdapter(id));
   }
-  for (const id of ["read_only_analysis", "source_digest", "workflow_pack_export", "compatibility_scoring", "license_check", "manifest_inspection", "dependency_risk_check", "candidate_ecosystem_acquire", "product_iteration_strategy", "host_code_iteration", "candidate_ecosystem_diff", "candidate_ecosystem_validation", "candidate_app_lifecycle", "candidate_self_hosting_probe", "semantic_alignment_review", "candidate_workspace_patch", "candidate_diff_summary", "candidate_validation", "promotion_report_generation", "report_generation", "orchestrator_task_dispatch", "quality_gate_evaluation", "memory_write_candidate"]) {
+  for (const id of ["read_only_analysis", "source_digest", "workflow_pack_export", "compatibility_scoring", "license_check", "manifest_inspection", "dependency_risk_check", "repo_push_gate", "candidate_ecosystem_acquire", "product_iteration_strategy", "host_code_iteration", "candidate_ecosystem_diff", "candidate_ecosystem_validation", "candidate_app_lifecycle", "candidate_self_hosting_probe", "semantic_alignment_review", "candidate_workspace_patch", "candidate_diff_summary", "candidate_validation", "promotion_report_generation", "report_generation", "orchestrator_task_dispatch", "quality_gate_evaluation", "memory_write_candidate"]) {
     registry.registerAction(actionAdapter(id));
   }
   for (const id of ["markdown_report", "json_artifact", "context_memory", "local_file", "github_issue_draft", "pull_request_draft", "media_storyboard", "video_draft_manifest"]) {
@@ -214,6 +217,7 @@ async function runAction(id, context) {
   if (id === "manifest_inspection") return manifestInspection(context);
   if (id === "dependency_risk_check") return dependencyRisk(context);
   if (id === "compatibility_scoring") return compatibilityScore(context);
+  if (id === "repo_push_gate") return repoPushGate(context);
   if (id === "candidate_ecosystem_acquire") return acquireCandidateEcosystem({ ...context, env: process.env });
   if (id === "product_iteration_strategy") return runProductIterationStrategy({ ...context, env: process.env });
   if (id === "host_code_iteration") return runHostCodeIteration({ ...context, env: process.env });
@@ -711,11 +715,31 @@ function promotionReportGeneration({ spec, actions }) {
   const modelDecision = modelDecisionFromActions(actions);
   const changedFiles = asArray(diff.changed_files);
   const validationCommands = asArray(validation.commands);
+  const normalizedFindings = normalizeQualityFindings(asArray(diff.quality_findings || validation.quality_findings));
+  const promotionReady = changedFiles.length > 0 && validation.status === "passed";
+  const candidateWorkspace = patch.workspace || diff.workspace || spec.pack_config?.candidate_workspace || null;
+  const pushReceipt = buildPushReceipt({
+    repository: {
+      name: spec.pack_config?.target_repo || spec.id || null,
+      path: candidateWorkspace
+    },
+    base_ref: spec.pack_config?.base_ref || null,
+    head_ref: patch.branch || diff.branch || null,
+    head_sha: diff.head_sha || null,
+    dirty_tree: false,
+    diff_summary: {
+      changed_files: changedFiles,
+      additions: diff.additions,
+      deletions: diff.deletions
+    },
+    findings: normalizedFindings,
+    gate_verdict: promotionReady ? "pass" : "blocked"
+  });
   return {
-    status: changedFiles.length && validation.status === "passed" ? "passed" : "attention",
-    promotion_ready: changedFiles.length > 0 && validation.status === "passed",
+    status: promotionReady ? "passed" : "attention",
+    promotion_ready: promotionReady,
     source_repository: spec.pack_config?.source_repository || null,
-    candidate_workspace: patch.workspace || diff.workspace || spec.pack_config?.candidate_workspace || null,
+    candidate_workspace: candidateWorkspace,
     changed_files: changedFiles,
     changed_file_count: changedFiles.length,
     model_backed: Boolean(modelDecision),
@@ -728,6 +752,8 @@ function promotionReportGeneration({ spec, actions }) {
       status: item.status,
       exit_code: item.exit_code
     })),
+    normalized_findings: normalizedFindings,
+    push_receipt: pushReceipt,
     next_step: changedFiles.length && validation.status === "passed"
       ? "Review the candidate diff and promote it through the host approval path."
       : "Inspect the candidate evidence before promotion."
@@ -774,6 +800,30 @@ function qualityGateEvaluation({ spec, sources, actions }) {
   };
 }
 
+async function repoPushGate({ spec }) {
+  const gate = spec.pack_config?.repo_push_gate || spec.pack_config || {};
+  return runRepoPushGateWithGitHub({
+    repo: gate.repository || spec.scope?.workspace || ".",
+    baseRef: gate.base_ref,
+    headRef: gate.head_ref,
+    maxRepairs: gate.max_repairs,
+    configPath: gate.config_path,
+    branch: gate.branch,
+    commit: gate.commit,
+    expectedBaseSha: gate.expected_base_sha,
+    repairRound: gate.repair_round,
+    ci: gate.ci_snapshot,
+    draftPr: gate.draft_pr === true,
+    pushBranch: gate.push_branch === true,
+    approveRemote: gate.approve_remote === true,
+    watchCi: gate.watch_ci,
+    ciPollMs: gate.ci_poll_ms,
+    ciIdleTimeoutMs: gate.ci_idle_timeout_ms,
+    ciMaxWallTimeoutMs: gate.ci_max_wall_timeout_ms,
+    ciMaxLogBytes: gate.ci_max_log_bytes
+  });
+}
+
 function reportGeneration({ spec, sources, actions, gates }) {
   const sourceLines = sources.map((source) => {
     const result = source.result || {};
@@ -804,9 +854,17 @@ function reportGeneration({ spec, sources, actions, gates }) {
     if (result.promotion_ready !== undefined) details.push(`promotion ready: ${result.promotion_ready}`);
     return `- ${action.adapter}: ${action.status}${details.length ? ` (${details.join(", ")})` : ""}`;
   });
-  const diffAction = actions.find((action) => action.adapter === "candidate_diff_summary")?.result || {};
-  const validationAction = actions.find((action) => action.adapter === "candidate_validation")?.result || {};
+  const diffAction = actions.find((action) => action.adapter === "candidate_ecosystem_diff")?.result
+    || actions.find((action) => action.adapter === "candidate_diff_summary")?.result
+    || {};
+  const validationAction = actions.find((action) => action.adapter === "candidate_ecosystem_validation")?.result
+    || actions.find((action) => action.adapter === "candidate_validation")?.result
+    || {};
   const promotionAction = actions.find((action) => action.adapter === "promotion_report_generation")?.result || {};
+  const normalizedFindings = asArray(promotionAction.normalized_findings);
+  const blockingFindingCount = normalizedFindings.filter((finding) => ["ask_user", "blocked", "failed"].includes(finding.state)).length;
+  const pushReceipt = promotionAction.push_receipt || null;
+  const repoGateAction = actions.find((action) => action.adapter === "repo_push_gate")?.result || null;
   const modelDecision = modelDecisionFromActions(actions);
   const focus = asArray(spec.pack_config?.focus);
   const candidateWorkspace = spec.pack_config?.candidate_workspace;
@@ -851,7 +909,19 @@ function reportGeneration({ spec, sources, actions, gates }) {
       "",
       "## Promotion",
       `- Ready: ${Boolean(promotionAction.promotion_ready)}`,
+      ...(normalizedFindings.length ? [
+        `- Normalized findings: ${normalizedFindings.length}`,
+        `- Blocking findings: ${blockingFindingCount}`
+      ] : []),
+      ...(pushReceipt ? [
+        `- PR readiness: ${pushReceipt.pr_ready_summary}`,
+        `- Evidence hash: ${pushReceipt.evidence_hash}`
+      ] : []),
       `- Next: ${promotionAction.next_step}`
+    ] : []),
+    ...(repoGateAction ? [
+      "",
+      renderGateMarkdown(repoGateAction)
     ] : []),
     "",
     "## Gates",
@@ -929,6 +999,10 @@ function evaluateGate(gate, { sources, actions }) {
     const task = actions.find((action) => action.adapter === "orchestrator_task_dispatch");
     passed = task?.result?.task?.model_backed === true && Boolean(task?.result?.task?.model_decision?.decision_hash);
     reason = passed ? "Host model decision evidence is present." : "Host model decision evidence is missing.";
+  } else if (id === "repo_push_gate_passed") {
+    const gate = actions.find((action) => action.adapter === "repo_push_gate");
+    passed = gate?.result?.gate_verdict === "pass";
+    reason = passed ? "Repository push gate produced a passing receipt." : "Repository push gate did not pass.";
   } else if (id === "candidate_has_diff") {
     const diff = actions.find((action) => action.adapter === "candidate_diff_summary");
     passed = (diff?.result?.changed_file_count || 0) > 0;

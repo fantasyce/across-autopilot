@@ -176,7 +176,7 @@
       },
     "budget": {
       "max_model_calls": 12,
-      "max_candidate_repairs": 3,
+      "max_candidate_repairs": 5,
       "max_usd": 0
     },
     "network_policy": {

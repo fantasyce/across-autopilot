@@ -16,6 +16,7 @@ export const BUILT_IN_SPEC_PATHS = Object.freeze({
   "plugin-compatibility-lab-v2": join(PACKAGE_ROOT, "examples", "plugin-compatibility-lab-v2.loop.json"),
   "external-skills-radar": join(PACKAGE_ROOT, "examples", "external-skills-radar.loop.json"),
   "repo-quality-copilot": join(PACKAGE_ROOT, "examples", "repo-quality-copilot.loop.json"),
+  "repo-push-gate": join(PACKAGE_ROOT, "examples", "repo-push-gate.loop.json"),
   "github-plugin-radar": join(PACKAGE_ROOT, "examples", "github-plugin-radar.loop.json"),
   "daily-news-brief": join(PACKAGE_ROOT, "examples", "daily-news-brief.loop.json")
 });
@@ -40,6 +41,7 @@ const AUTONOMY_BY_ACTION = new Map([
   ["compatibility_scoring", 2],
   ["report_generation", 2],
   ["quality_gate_evaluation", 2],
+  ["repo_push_gate", 2],
   ["orchestrator_task_dispatch", 2],
   ["candidate_diff_summary", 2],
   ["candidate_ecosystem_acquire", 3],

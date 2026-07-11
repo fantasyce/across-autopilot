@@ -89,6 +89,63 @@ const TOOL_PACKS = Object.freeze([
     deterministic_role: "read repository files, git status, and manifests through bounded adapters"
   },
   {
+    id: "repo_push_gate",
+    title: "Repository Push Gate",
+    capability_refs: ["action.repo_push_gate", "action.quality_gate_evaluation"],
+    owner: "across-autopilot",
+    boundary: "baseline_trusted_gate_with_approval_controlled_github_drafts",
+    inputs: ["repository", "base_ref", "head_ref", "branch", "commit", "diff", "trusted_baseline_config", "remote_approval", "environment_credentials"],
+    outputs: ["findings", "checks", "repair_plan", "ci", "draft_pr", "github_review", "github_remote", "push_receipt"],
+    input_schema: {
+      type: "object",
+      required: ["repository"],
+      properties: {
+        repository: { type: "string" },
+        base_ref: { type: "string" },
+        head_ref: { type: "string" },
+        branch: { type: "string" },
+        commit: { type: "string" },
+        max_repairs: { type: "number" },
+        draft_pr: { type: "boolean" },
+        push_branch: { type: "boolean" },
+        approve_remote: { type: "boolean" },
+        watch_ci: { type: "boolean" },
+        ci_idle_timeout_ms: { type: "number" },
+        ci_max_wall_timeout_ms: { type: "number" }
+      }
+    },
+    output_schema: {
+      type: "object",
+      required: [
+        "schema_version", "repository", "base_ref", "head_ref", "head_sha",
+        "dirty_tree", "diff_summary", "findings", "gate_verdict", "evidence_hash",
+        "pr_ready_summary", "checks", "repair_plan", "ci", "draft_pr", "github_review", "github_remote"
+      ],
+      properties: {
+        schema_version: { const: "across-autopilot-gate-result/1.0" },
+        repository: { type: ["string", "object"] },
+        base_ref: { type: "string" },
+        head_ref: { type: "string" },
+        head_sha: { type: "string" },
+        dirty_tree: { type: "boolean" },
+        diff_summary: { type: "object" },
+        findings: { type: "array" },
+        gate_verdict: { enum: ["pass", "warn", "fail", "blocked", "unknown"] },
+        evidence_hash: { type: "string" },
+        pr_ready_summary: { type: "string" },
+        checks: { type: "object" },
+        repair_plan: { type: "object" },
+        ci: { type: "object" },
+        draft_pr: { type: "object" },
+        github_review: { type: "object" },
+        github_remote: { type: "object" },
+        push_receipt: { type: "object" }
+      }
+    },
+    model_role: "interpret findings and propose bounded repairs without changing trusted commands",
+    deterministic_role: "load commands and remote policy from the base Git object, bind refs and diff, run checks, watch CI with activity heartbeats, and idempotently update approval-controlled draft GitHub artifacts"
+  },
+  {
     id: "repo_quality_inspection",
     title: "Repository Quality Inspection",
     capability_refs: ["source.github_repo", "source.directory", "action.manifest_inspection", "action.read_only_analysis"],
@@ -321,7 +378,7 @@ const TOOL_PACKS = Object.freeze([
     owner: "across-autopilot",
     boundary: "read_only_candidate_review",
     inputs: ["candidate_diff", "changed_files", "validation_results"],
-    outputs: ["quality_findings", "reviewer_scores", "promotion_package", "source_ref_pins"],
+    outputs: ["quality_findings", "normalized_findings", "reviewer_scores", "promotion_package", "push_receipt", "source_ref_pins"],
     input_schema: {
       type: "object",
       required: ["candidate_diff"],
@@ -336,8 +393,10 @@ const TOOL_PACKS = Object.freeze([
       required: ["quality_findings", "promotion_package"],
       properties: {
         quality_findings: { type: "array" },
+        normalized_findings: { type: "array" },
         reviewer_scores: { type: "object" },
         promotion_package: { type: "object" },
+        push_receipt: { type: "object" },
         source_ref_pins: { type: "object" }
       }
     },
