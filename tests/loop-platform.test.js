@@ -15,6 +15,7 @@ import { RunStore } from "../src/run-store.js";
 import { runJsonCommand } from "../src/process-client.js";
 import { buildToolPackRegistry } from "../src/tool-packs.js";
 import { buildRoleEvidence } from "../src/roles.js";
+import { buildEvidenceEnvelope } from "../src/evidence.js";
 
 const exec = promisify(execFile);
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -823,7 +824,7 @@ test("candidate validation rejects missing exports from changed AAA runtime impo
   );
   await writeFile(
     join(aaaTarget, "backend", "src", "across_agents_assistant", "autopilot_workbench.py"),
-    "from .autopilot_mcp_tool_registry import MCPToolRegistry\n\n\ndef snapshot():\n  return {'registry': MCPToolRegistry}\n",
+    "def snapshot():\n  from .autopilot_mcp_tool_registry import MCPToolRegistry\n  return {'registry': MCPToolRegistry}\n",
     "utf8"
   );
 
@@ -1171,7 +1172,7 @@ process.stdout.write(JSON.stringify({
   }
 });
 
-test("host code iteration repair fails clearly when patches make no changes", async () => {
+test("host code iteration repair records attention when patches make no changes", async () => {
   const home = await mkdtemp(join(tmpdir(), "across-autopilot-noop-repair-"));
   const sourcesRoot = join(home, "sources");
   const repos = [];
@@ -1217,8 +1218,88 @@ process.stdout.write(JSON.stringify({
   };
   const acquired = await acquireCandidateEcosystem({ spec, run, env });
 
-  await assert.rejects(
-    runHostCodeIteration({
+  const result = await runHostCodeIteration({
+    spec,
+    run,
+    env,
+    actions: [
+      { adapter: "candidate_ecosystem_acquire", result: acquired },
+      {
+        adapter: "product_iteration_strategy",
+        result: {
+          selected_iteration: {
+            goal: "Repair unchanged capability helper.",
+            target_repo: "across-agents-assistant",
+            allowed_patch_paths: ["backend/src/across_agents_assistant/capability.py"]
+          }
+        }
+      },
+      {
+        adapter: "candidate_ecosystem_validation",
+        status: "attention",
+        result: {
+          commands: [{
+            command: "python3",
+            args: ["-c", "raise AssertionError('still broken')"],
+            status: "failed",
+            diagnostic: { failure_kind: "candidate_test_assertion" }
+          }]
+        }
+      }
+    ]
+  });
+
+  assert.equal(result.status, "attention");
+  assert.equal(result.noop_repair.reason, "repair_patches_made_no_file_changes");
+  assert.equal(result.noop_repair.unresolved_feedback_kind, "candidate_test_assertion");
+  assert.equal(result.changed_files.length, 0);
+});
+
+test("host code iteration trims trailing whitespace in source patches", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-trim-source-"));
+  const sourcesRoot = join(home, "sources");
+  const repos = [];
+  for (const id of ["across-agents-assistant", "across-orchestrator", "across-context", "across-autopilot"]) {
+    const source = join(sourcesRoot, id);
+    const files = id === "across-agents-assistant"
+      ? { "backend/src/across_agents_assistant/capability.py": "VALUE = 'old'\n" }
+      : { "README.md": `# ${id}\n` };
+    await createGitSource(source, files);
+    repos.push({ id, source });
+  }
+  const hostCommand = join(home, "host-code-trailing.js");
+  await writeFile(hostCommand, `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({
+  schema_version: "across-host-code-iteration/1.0",
+  status: "passed",
+  model_backed: true,
+  provider: "fake-host",
+  model: "trailing-builder",
+  summary: "Trailing whitespace patch",
+  patches: [{ path: "backend/src/across_agents_assistant/capability.py", mode: "overwrite", content: "VALUE = 'new'   \\nif True:\\t\\n    FLAG = True\\t\\n" }]
+}));
+`, "utf8");
+  const env = {
+    ...process.env,
+    ACROSS_HOME: home,
+    ACROSS_AAA_HOST_CODE_COMMAND: JSON.stringify(["node", hostCommand])
+  };
+  const run = { run_id: "run-trim-source" };
+  const spec = {
+    id: "trim-source-spec",
+    description: "Verify generated source patches are normalized before quality gates.",
+    pack_config: {
+      target_repo: "across-agents-assistant",
+      candidate_ecosystem: { repos },
+      allowed_patch_paths: ["backend/src/across_agents_assistant/capability.py"],
+      validation_commands: []
+    },
+    model_policy: { required: true }
+  };
+  const acquired = await acquireCandidateEcosystem({ spec, run, env });
+
+  try {
+    const result = await runHostCodeIteration({
       spec,
       run,
       env,
@@ -1228,32 +1309,22 @@ process.stdout.write(JSON.stringify({
           adapter: "product_iteration_strategy",
           result: {
             selected_iteration: {
-              goal: "Repair unchanged capability helper.",
+              goal: "Apply normalized capability helper.",
               target_repo: "across-agents-assistant",
               allowed_patch_paths: ["backend/src/across_agents_assistant/capability.py"]
             }
           }
-        },
-        {
-          adapter: "candidate_ecosystem_validation",
-          status: "attention",
-          result: {
-            commands: [{
-              command: "python3",
-              args: ["-c", "raise AssertionError('still broken')"],
-              status: "failed",
-              diagnostic: { failure_kind: "candidate_test_assertion" }
-            }]
-          }
         }
       ]
-    }),
-    (error) => {
-      assert.match(error.message, /produced no file changes/);
-      assert.match(error.message, /candidate_test_assertion/);
-      return true;
-    }
-  );
+    });
+    const aaaRepo = acquired.repos.find((repo) => repo.id === "across-agents-assistant");
+    const content = await readFile(join(aaaRepo.target, "backend/src/across_agents_assistant/capability.py"), "utf8");
+
+    assert.equal(result.status, "passed");
+    assert.doesNotMatch(content, /[ \t]+$/m);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });
 
 test("JSON command failures preserve bounded stdout and stderr diagnostics", async () => {
@@ -1667,6 +1738,10 @@ test("tool pack registry exposes runtime packs and IO schemas", () => {
   assert.ok(triggerPack.input_schema.required.includes("type"));
   assert.ok(integrityPack.output_schema.required.includes("audit_chain_tip"));
   assert.ok(diffQualityPack.output_schema.required.includes("promotion_package"));
+  assert.ok(diffQualityPack.outputs.includes("normalized_findings"));
+  assert.ok(diffQualityPack.outputs.includes("push_receipt"));
+  assert.ok(Object.hasOwn(diffQualityPack.output_schema.properties, "normalized_findings"));
+  assert.ok(Object.hasOwn(diffQualityPack.output_schema.properties, "push_receipt"));
 });
 
 test("runtime policy is validated and missing capabilities fail before adapters run", async () => {
@@ -2473,13 +2548,74 @@ test("candidate workspace iteration mutates only the candidate copy", async () =
   assert.ok(evidence.actions.find((action) => action.adapter === "candidate_workspace_patch").result.changed_files.includes("docs/AAA_SELF_ITERATION_CANDIDATE.md"));
   assert.ok(evidence.actions.find((action) => action.adapter === "candidate_diff_summary").result.changed_files.includes("docs/AAA_SELF_ITERATION_CANDIDATE.md"));
   assert.equal(evidence.actions.find((action) => action.adapter === "candidate_validation").status, "passed");
-  assert.equal(evidence.actions.find((action) => action.adapter === "promotion_report_generation").result.promotion_ready, true);
+  const promotion = evidence.actions.find((action) => action.adapter === "promotion_report_generation").result;
+  assert.equal(promotion.promotion_ready, true);
+  assert.equal(promotion.normalized_findings.length, 0);
+  assert.equal(promotion.push_receipt.schema_version, "across-autopilot-push-receipt/1.0");
+  assert.equal(promotion.push_receipt.gate_verdict, "pass");
+  assert.match(promotion.push_receipt.evidence_hash, /^[a-f0-9]{64}$/);
   assert.equal(evidence.gates.every((gate) => gate.status === "passed"), true);
   const reportPath = evidence.outputs.find((output) => output.id === "markdown_report").path;
   const report = await readFile(reportPath, "utf8");
   assert.match(report, /## Candidate Diff/);
   assert.match(report, /## Model Decision/);
   assert.match(report, /## Promotion/);
+  assert.match(report, /PR-ready: checks passed with no blocking findings/);
+});
+
+test("report generation renders ecosystem candidate diff and validation sections", async () => {
+  const registry = new AdapterRegistry();
+  registerBuiltIns(registry);
+  const report = await registry.getAction("report_generation").run({
+    spec: {
+      id: "ecosystem-report",
+      name: "Ecosystem Report",
+      description: "Render ecosystem candidate evidence.",
+      autonomy: { level: 3 },
+      pack_config: { mutation_policy: "candidate_workspace_only" }
+    },
+    sources: [],
+    actions: [
+      {
+        id: "diff",
+        adapter: "candidate_ecosystem_diff",
+        status: "passed",
+        result: {
+          changed_files: ["backend/src/across_agents_assistant/agent_workspace_readiness.py"],
+          changed_file_count: 1
+        }
+      },
+      {
+        id: "validation",
+        adapter: "candidate_ecosystem_validation",
+        status: "passed",
+        result: {
+          commands: [{ command: "python", args: ["-m", "pytest"], status: "passed" }]
+        }
+      },
+      {
+        id: "promotion",
+        adapter: "promotion_report_generation",
+        status: "passed",
+        result: {
+          promotion_ready: true,
+          next_step: "Review candidate.",
+          normalized_findings: [],
+          push_receipt: {
+            pr_ready_summary: "PR-ready: checks passed with no blocking findings.",
+            evidence_hash: "a".repeat(64)
+          }
+        }
+      }
+    ],
+    gates: [{ id: "promotion_report_ready", status: "passed", reason: "Promotion report says candidate is ready." }]
+  });
+
+  assert.match(report.result.markdown, /## Candidate Diff/);
+  assert.match(report.result.markdown, /agent_workspace_readiness\.py/);
+  assert.match(report.result.markdown, /## Candidate Validation/);
+  assert.match(report.result.markdown, /python -m pytest: passed/);
+  assert.match(report.result.markdown, /Evidence hash: a{64}/);
 });
 
 test("stable controller creates four-repo B candidate and B proves C probe", async () => {
@@ -3264,6 +3400,111 @@ console.log(JSON.stringify({
     assert.ok(rendered.some((command) => command.includes("runpy.run_path('backend/tests/test_autopilot_pytest_command.py')")));
   } finally {
     restoreEnv(previousEnv);
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("candidate diff flags brittle dynamic list assertions in self-iteration tests", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-brittle-list-"));
+  const repo = join(home, "candidate", "across-agents-assistant");
+  await createGitSource(repo, {
+    "backend/src/across_agents_assistant/api_server.py": "APP_READY = True\n"
+  });
+  const testPath = join(repo, "backend", "tests", "test_dynamic_gate_readiness.py");
+  await mkdir(dirname(testPath), { recursive: true });
+  await writeFile(testPath, [
+    "def test_dynamic_gate_gap():",
+    "    summary = {'promotion_readiness_required_evidence_gap': ['promotion_attestation']}",
+    "    assert summary['promotion_readiness_required_evidence_gap'] == [",
+    "        'promotion_attestation',",
+    "    ]",
+    ""
+  ].join("\n"), "utf8");
+
+  try {
+    const spec = { id: "aaa-autonomous-self-iteration-brittle-list", pack_config: {} };
+    const run = { run_id: "run-brittle-list" };
+    const acquireAction = {
+        adapter: "candidate_ecosystem_acquire",
+        result: {
+          candidate_id: "candidate-brittle-list",
+          repos: [{ id: "across-agents-assistant", target: repo, source: repo }]
+        }
+      };
+    const env = { ...process.env, ACROSS_HOME: home };
+    const diff = await candidateEcosystemDiff({
+      spec,
+      run,
+      actions: [acquireAction],
+      env
+    });
+
+    const findings = diff.repos[0].quality_findings;
+    const finding = findings.find((item) => item.id === "brittle_dynamic_list_assertion");
+    assert.equal(finding?.severity, "error");
+    assert.match(finding.message, /stable invariants/);
+    assert.equal(diff.repos[0].normalized_findings.some((item) => item.id === "brittle_dynamic_list_assertion"), true);
+
+    const validation = await validateCandidateEcosystem({
+      spec,
+      run,
+      actions: [
+        acquireAction,
+        { adapter: "candidate_ecosystem_diff", result: diff }
+      ],
+      env
+    });
+    const qualityCommand = validation.commands.find((item) => item.command === "candidate_quality");
+    assert.equal(validation.status, "attention");
+    assert.equal(qualityCommand?.status, "failed");
+    assert.equal(qualityCommand.quality_findings[0].id, "brittle_dynamic_list_assertion");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("candidate diff permits resilient dynamic membership assertions", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-resilient-list-"));
+  const repo = join(home, "candidate", "across-agents-assistant");
+  await createGitSource(repo, {
+    "backend/src/across_agents_assistant/api_server.py": "APP_READY = True\n"
+  });
+  const testPath = join(repo, "backend", "tests", "test_dynamic_gate_readiness.py");
+  await mkdir(dirname(testPath), { recursive: true });
+  await writeFile(testPath, [
+    "SUPPORTED_STATUSES = ['ready', 'attention', 'blocked']",
+    "",
+    "def test_dynamic_gate_gap():",
+    "    summary = {'promotion_readiness_required_evidence_gap': ['promotion_attestation']}",
+    "    gap = set(summary['promotion_readiness_required_evidence_gap'])",
+    "    assert {'promotion_attestation'}.issubset(gap)",
+    "    assert len(gap) >= 1",
+    "",
+    "def test_static_contract_exact_list_is_allowed():",
+    "    assert SUPPORTED_STATUSES == [",
+    "        'ready',",
+    "        'attention',",
+    "        'blocked',",
+    "    ]",
+    ""
+  ].join("\n"), "utf8");
+
+  try {
+    const diff = await candidateEcosystemDiff({
+      spec: { id: "aaa-autonomous-self-iteration-resilient-list", pack_config: {} },
+      run: { run_id: "run-resilient-list" },
+      actions: [{
+        adapter: "candidate_ecosystem_acquire",
+        result: {
+          candidate_id: "candidate-resilient-list",
+          repos: [{ id: "across-agents-assistant", target: repo, source: repo }]
+        }
+      }],
+      env: { ...process.env, ACROSS_HOME: home }
+    });
+
+    assert.equal(diff.repos[0].quality_findings.some((item) => item.id === "brittle_dynamic_list_assertion"), false);
+  } finally {
     await rm(home, { recursive: true, force: true });
   }
 });
@@ -4274,6 +4515,10 @@ test("promotion evidence requires source ref pins before review readiness", () =
   assert.equal(ready.promotion_ready, true);
   assert.equal(ready.promotion_package.source_ref_pins.status, "passed");
   assert.equal(ready.promotion_package.source_ref_pins.repos.length, 4);
+  assert.equal(ready.normalized_findings.length, 0);
+  assert.equal(ready.push_receipt.gate_verdict, "pass");
+  assert.equal(ready.push_receipt.pr_ready_summary, "PR-ready: checks passed with no blocking findings.");
+  assert.equal(ready.promotion_package.push_receipt.evidence_hash, ready.push_receipt.evidence_hash);
 
   const missingPins = buildCandidatePromotionEvidence({
     spec: { id: "source-pinning" },
@@ -4289,7 +4534,177 @@ test("promotion evidence requires source ref pins before review readiness", () =
 
   assert.equal(missingPins.promotion_ready, false);
   assert.equal(missingPins.promotion_package.source_ref_pins.status, "failed");
+  assert.equal(missingPins.push_receipt.gate_verdict, "fail");
+  assert.match(missingPins.push_receipt.pr_ready_summary, /Not PR-ready/);
   assert.ok(missingPins.promotion_package.known_risks.some((risk) => risk.source === "source_ref_pins"));
+});
+
+test("candidate promotion evidence exposes normalized findings and push receipt for blocking quality", () => {
+  const promotion = buildCandidatePromotionEvidence({
+    spec: { id: "normalized-findings" },
+    run: { run_id: "run-normalized-findings" },
+    actions: [
+      {
+        adapter: "candidate_ecosystem_acquire",
+        result: {
+          candidate_id: "candidate-normalized-findings",
+          mode: "snapshot",
+          four_repo_manifest: true,
+          repos: [
+            { id: "across-agents-assistant", source_head_pre: "a", source_git: true },
+            { id: "across-autopilot", source_head_pre: "a", source_git: true },
+            { id: "across-context", source_head_pre: "a", source_git: true },
+            { id: "across-orchestrator", source_head_pre: "a", source_git: true }
+          ]
+        }
+      },
+      {
+        adapter: "candidate_ecosystem_diff",
+        result: {
+          changed_files: ["across-autopilot/src/cli.js"],
+          repos: [{
+            id: "across-autopilot",
+            changed_file_count: 1,
+            changed_files: ["src/cli.js"],
+            quality_findings: [{
+              id: "unsafe_shell_execution",
+              severity: "error",
+              path: "src/cli.js",
+              line: 10,
+              message: "candidate code must not introduce shell execution"
+            }]
+          }]
+        }
+      },
+      {
+        adapter: "candidate_ecosystem_validation",
+        result: {
+          status: "attention",
+          commands: [{
+            repo: "across-autopilot",
+            command: "candidate_quality",
+            status: "failed",
+            quality_findings: [{
+              id: "unsafe_shell_execution",
+              severity: "error",
+              path: "src/cli.js",
+              line: 10,
+              message: "candidate code must not introduce shell execution"
+            }]
+          }],
+          source_unchanged: {
+            unchanged: true,
+            repos: [
+              { id: "across-agents-assistant", unchanged: true, head_post: "a" },
+              { id: "across-autopilot", unchanged: true, head_post: "a" },
+              { id: "across-context", unchanged: true, head_post: "a" },
+              { id: "across-orchestrator", unchanged: true, head_post: "a" }
+            ]
+          }
+        }
+      },
+      { adapter: "candidate_self_hosting_probe", result: { required: false, status: "passed" } },
+      { adapter: "semantic_alignment_review", result: { status: "passed", promotion_recommendation: "review", reviewer_independent: true, model_separation: { status: "passed" } } }
+    ]
+  });
+
+  assert.equal(promotion.promotion_ready, false);
+  assert.equal(promotion.normalized_findings.length, 1);
+  assert.equal(promotion.normalized_findings[0].state, "blocked");
+  assert.equal(promotion.normalized_findings[0].source_gate, "candidate_quality");
+  assert.equal(promotion.push_receipt.gate_verdict, "blocked");
+  assert.match(promotion.push_receipt.evidence_hash, /^[a-f0-9]{64}$/);
+  assert.equal(promotion.promotion_package.normalized_findings[0].id, "unsafe_shell_execution");
+});
+
+test("candidate validation carries normalized findings on implicit quality command", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-normalized-validation-"));
+  const repo = join(home, "candidate", "across-autopilot");
+  await mkdir(repo, { recursive: true });
+
+  const result = await validateCandidateEcosystem({
+    spec: { id: "normalized-validation", pack_config: { candidate_validation: { commands: [] } } },
+    run: { run_id: "run-normalized-validation" },
+    actions: [
+      {
+        adapter: "candidate_ecosystem_acquire",
+        result: {
+          candidate_id: "candidate-normalized-validation",
+          repos: [{ id: "across-autopilot", target: repo }]
+        }
+      },
+      {
+        adapter: "candidate_ecosystem_diff",
+        result: {
+          repos: [{
+            id: "across-autopilot",
+            quality_findings: [{
+              id: "placeholder_implementation",
+              severity: "error",
+              path: "src/index.js",
+              line: 1,
+              message: "placeholder implementation must be replaced before promotion"
+            }]
+          }]
+        }
+      }
+    ],
+    env: { ...process.env, ACROSS_HOME: home }
+  });
+
+  const qualityCommand = result.commands.find((command) => command.command === "candidate_quality");
+  assert.equal(result.status, "attention");
+  assert.equal(qualityCommand.normalized_findings[0].state, "blocked");
+  assert.equal(qualityCommand.normalized_findings[0].source_gate, "candidate_quality");
+  assert.equal(qualityCommand.normalized_findings[0].suggested_action, "Repair before promotion.");
+});
+
+test("candidate evidence projection exposes normalized findings and push receipt", () => {
+  const evidence = buildEvidenceEnvelope({
+    spec: { id: "projection-normalized-findings", runtime_policy: {} },
+    run: {
+      run_id: "run-projection-normalized-findings",
+      status: "completed",
+      started_at: "2026-07-10T00:00:00Z",
+      completed_at: "2026-07-10T00:01:00Z"
+    },
+    actions: [
+      {
+        adapter: "candidate_ecosystem_acquire",
+        status: "passed",
+        result: { candidate_id: "candidate-projection", four_repo_manifest: true }
+      },
+      {
+        adapter: "candidate_ecosystem_diff",
+        status: "passed",
+        result: {
+          changed_files: ["across-autopilot/src/cli.js"],
+          repos: [{
+            id: "across-autopilot",
+            changed_files: ["src/cli.js"],
+            quality_findings: [{
+              id: "long_source_line",
+              severity: "warning",
+              path: "src/cli.js",
+              line: 12,
+              message: "long source lines reduce reviewability"
+            }]
+          }]
+        }
+      },
+      {
+        adapter: "candidate_ecosystem_validation",
+        status: "passed",
+        result: { status: "passed", commands: [] }
+      }
+    ]
+  });
+
+  assert.equal(evidence.candidate.normalized_findings.length, 1);
+  assert.equal(evidence.candidate.normalized_findings[0].state, "no_op");
+  assert.equal(evidence.candidate.repos[0].normalized_findings[0].id, "long_source_line");
+  assert.equal(evidence.candidate.push_receipt.gate_verdict, "pass");
+  assert.match(evidence.candidate.push_receipt.evidence_hash, /^[a-f0-9]{64}$/);
 });
 
 test("candidate diff filters runtime artifacts and semantic review rejects destructive docs rewrite", async () => {
@@ -4687,6 +5102,96 @@ console.log(JSON.stringify({
   assert.equal(review.model_separation.required, false);
   assert.equal(review.model_separation.status, "not_required");
   assert.equal(review.policy.distinct_model_required, false);
+});
+
+test("semantic review sends compact selected iteration to host reviewer", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-review-compact-request-"));
+  const reviewCommand = join(home, "reviewer.js");
+  const capturePath = join(home, "request.json");
+  const longInlineValidation = [
+    "import ast",
+    "import sys",
+    "from pathlib import Path",
+    "print('LONG_INLINE_VALIDATION_SENTINEL')",
+    "assert Path('backend/src/across_agents_assistant/autopilot_product.py').exists()"
+  ].join("\\n");
+  await writeFile(reviewCommand, `#!/usr/bin/env node
+const fs = require("fs");
+const index = process.argv.indexOf("--request-json");
+const request = JSON.parse(process.argv[index + 1]);
+fs.writeFileSync(process.env.CAPTURE_PATH, JSON.stringify(request, null, 2));
+console.log(JSON.stringify({
+  schema_version: "across-host-review-decision/1.0",
+  model_backed: true,
+  provider: "local-agent",
+  model: "codex",
+  decision_hash: "compact-review-request",
+  status: "passed",
+  recommendation: "review",
+  merge_recommendation: "open_review_pr",
+  product_value_score: 92,
+  maintainability_score: 91,
+  risk_score: 8,
+  blocking_reasons: []
+}));
+`, "utf8");
+
+  const review = await semanticAlignmentReview({
+    spec: {
+      id: "aaa-autonomous-self-iteration",
+      pack_config: {
+        semantic_review: {
+          minimum_validation_commands: 1,
+          require_distinct_model: false,
+          independent_reviewer_required: true
+        },
+        reviewer_model_policy: {
+          required: true,
+          agent_id: "codex",
+          provider: "local-agent",
+          model: "codex",
+          require_distinct_from_builder: false
+        }
+      }
+    },
+    run: { run_id: "run-review-compact" },
+    actions: [
+      {
+        adapter: "product_iteration_strategy",
+        result: {
+          selected_iteration: {
+            target_id: "product",
+            target_repo: "across-agents-assistant",
+            goal: "Add a product helper.",
+            allowed_patch_paths: ["backend/src/across_agents_assistant/autopilot_product.py"],
+            context_files: ["backend/src/across_agents_assistant/loop_engineering_capability_pack.py"],
+            source_refs: ["mcp-tooling-architecture-signal"],
+            tool_packs: ["validation_harness", "independent_review"],
+            validation_commands: [
+              { repo: "across-agents-assistant", command: "python3", args: ["-c", longInlineValidation], timeout_ms: 60000 }
+            ],
+            semantic_review: {
+              minimum_validation_commands: 1,
+              require_distinct_model: false,
+              independent_reviewer_required: true
+            }
+          }
+        }
+      },
+      { adapter: "host_code_iteration", result: { model_backed: true, provider: "local-agent", model: "codex", summary: "Add product helper." } },
+      { adapter: "candidate_ecosystem_diff", result: { changed_files: ["across-agents-assistant/backend/src/across_agents_assistant/autopilot_product.py"], repos: [] } },
+      { adapter: "candidate_ecosystem_validation", result: { status: "passed", commands: [{ status: "passed", command: "python3" }] } }
+    ],
+    env: { ...process.env, ACROSS_AAA_HOST_REVIEW_COMMAND: JSON.stringify(["node", reviewCommand]), CAPTURE_PATH: capturePath }
+  });
+
+  assert.equal(review.status, "passed");
+  const captured = JSON.parse(await readFile(capturePath, "utf8"));
+  assert.equal(captured.selected_iteration.target_id, "product");
+  assert.equal(captured.selected_iteration.validation_command_count, 1);
+  assert.equal(captured.selected_iteration.semantic_review.minimum_validation_commands, 1);
+  assert.equal(captured.selected_iteration.validation_commands, undefined);
+  assert.equal(JSON.stringify(captured).includes("LONG_INLINE_VALIDATION_SENTINEL"), false);
 });
 
 test("semantic review accepts host timeout recovered candidate when reviewer times out", async () => {

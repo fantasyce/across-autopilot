@@ -51,8 +51,86 @@ dependency risk, license policy, quality gates, and writes a markdown report
 plus pending Across Context memory. It works from Codex, Claude Code, Claude Desktop, AAA, or another host as long as the host loads the managed `~/.across`
 plugin runtime.
 
+For a concrete local push boundary, run the Git/PR quality gate:
+
+```bash
+across-autopilot gate --repo . --base-ref origin/main --head-ref HEAD --max-repairs 2 --json
+```
+
+The gate resolves and records the repository, base ref, head ref, branch, head
+commit, dirty state, and committed diff. Executable check commands are loaded
+only from `.across/repo-push-gate.json` in the resolved base commit with
+`git show`; command strings supplied by a feature branch or CLI are not
+accepted. Start from `examples/repo-push-gate.config.json`, review it, and
+commit it to the trusted base branch. The result uses
+`across-autopilot-gate-result/1.0` and includes normalized findings, check and
+policy evidence, bounded repair planning, CI status, a draft-PR plan, a GitHub
+Check / PR-comment payload, and the deterministic push-receipt hash. The
+default remains local and non-mutating.
+
+`--draft-pr` by itself only plans draft-PR evidence. Remote mutation requires
+all of the following: `github_remote.enabled=true` in the trusted base config,
+an exact host/repository allowlist, explicit `push_branch` permission, an exact
+`refs/heads/...` feature-branch allowlist, draft-only operations,
+`network_policy=allow`, `--push-branch --approve-remote`, a matching approval token in the policy-named environment
+variable, and a GitHub token in the policy-named environment variable. Token
+values are never accepted as CLI arguments and are not written to evidence.
+For example:
+
+```bash
+export ACROSS_REPO_GATE_APPROVAL_TOKEN='<approval value matching the trusted digest>'
+export GH_TOKEN='<GitHub token>'
+across-autopilot gate --repo . --base-ref origin/main --head-ref HEAD \
+  --push-branch --draft-pr --approve-remote --watch-ci true --json
+```
+
+The approved path first pushes the gated commit SHA with a non-force explicit
+`<sha>:refs/heads/<feature>` refspec, verifies the remote SHA with `ls-remote`,
+and only then creates or resumes one draft PR. `HEAD`, `main`, `master`, tags,
+deletes, force pushes, wildcard refs, and refs absent from the trusted exact
+allowlist are rejected. A lost push response is reconciled against the remote
+SHA before any PR mutation. The path then polls GitHub Actions,
+collects bounded failed-log summaries, recalculates normalized findings and
+repair candidates, and idempotently creates or updates one verification result
+and one marked PR comment. `verification_mode` can be `check_run` for a GitHub
+App token, `commit_status` for a user token, or `auto` to fall back only when
+GitHub explicitly rejects the token type. CI polling refreshes its idle timer on every successful
+GitHub heartbeat and also enforces a separate total wall-clock limit. Rerunning
+the same approved command recovers the existing PR, verification result, and comment.
+
+Gate exit codes are exact: `0` means a completed `pass`
+verdict, including no-op; `2` means a completed `warn`, `blocked`, `fail`, or
+`unknown` verdict, or a denied/failed remote operation; `1` means usage or
+runtime failure before a valid gate result was produced.
+
+When CI is required, pass `--ci-path <snapshot.json>`. Add
+`--ci-wait-seconds <n>` to poll that bounded local watcher snapshot until all
+checks are terminal or the wait budget expires.
+
+Trusted GitHub remote policy example (store only the approval token SHA-256,
+never either token value):
+
+```json
+{
+  "network_policy": "allow",
+  "github_remote": {
+    "enabled": true,
+    "repository": "owner/repository",
+    "allowed_hosts": ["github.com"],
+    "allowed_operations": ["push_branch", "draft_pr", "ci_watch", "check_run", "pr_comment"],
+    "allowed_push_refs": ["refs/heads/feature/exact-branch-name"],
+    "verification_mode": "auto",
+    "require_draft": true,
+    "approval_token_env": "ACROSS_REPO_GATE_APPROVAL_TOKEN",
+    "approval_token_sha256": "<64 lowercase hex characters>",
+    "auth_token_env": "GH_TOKEN"
+  }
+}
+```
+
 Other built-in workflows:
 
+- `repo-push-gate` for a baseline-trusted local receipt or explicitly approved draft GitHub PR/CI loop.
 - `aaa-release-readiness-gate` for release evidence.
 - `github-plugin-radar` for external plugin adoption decisions.
 - `daily-news-brief` for a content-production loop.
@@ -71,9 +149,15 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.2.30`. It is source-first and GitHub-first: hosts can
-install it from the `v0.2.30` tag as a managed Across plugin, and the npm package
+The current release is `v0.3.0`. It is source-first and GitHub-first: hosts can
+install it from the `v0.3.0` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.3.0` adds an approval-controlled GitHub delivery loop: exact non-force
+feature-branch push, resumable draft PRs, Actions heartbeats with separate idle
+and wall budgets, normalized CI repair evidence, marked comments, and GitHub App
+Check Runs or user-token-compatible Commit Status verification. Remote mutation
+remains disabled unless the trusted base policy and one-run host approval agree.
 
 `v0.2.30` moves AAA self-iteration Codex policies to the locally visible
 `gpt-5.5` model and adds deterministic timeout-recovery evidence for builder
@@ -343,6 +427,8 @@ npm test
 node src/cli.js status --json
 node src/cli.js loop validate --spec repo-quality-copilot --json
 node src/cli.js loop dry-run --spec repo-quality-copilot --json
+node src/cli.js loop validate --spec repo-push-gate --json
+node src/cli.js loop dry-run --spec repo-push-gate --json
 node src/cli.js loop validate --spec aaa-autonomous-self-iteration --json
 node src/cli.js loop dry-run --spec aaa-autonomous-self-iteration --json
 node src/cli.js loop validate --spec daily-news-brief --json

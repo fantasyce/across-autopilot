@@ -48,3 +48,27 @@ test("RFC points future work at the reference architecture", async () => {
     assert.ok(rfc.includes(anchor), `missing RFC anchor: ${anchor}`);
   }
 });
+
+test("agent-readable docs describe the approval-controlled GitHub boundary", async () => {
+  const [readme, llms, productText] = await Promise.all([
+    readFile("README.md", "utf8"),
+    readFile("llms.txt", "utf8"),
+    readFile("across-autopilot.product.json", "utf8")
+  ]);
+  const product = JSON.parse(productText);
+  for (const anchor of [
+    "--push-branch --approve-remote",
+    "allowed_push_refs",
+    "lost push response",
+    "github_remote.enabled=true",
+    "approval token SHA-256",
+    "heartbeat",
+    "never accepted as CLI arguments"
+  ]) {
+    assert.ok(readme.includes(anchor), `missing remote gate README anchor: ${anchor}`);
+  }
+  assert.match(llms, /approval-controlled GitHub mode/);
+  assert.match(llms, /secrets are never persisted/);
+  assert.ok(product.owns.includes("approval-controlled feature branch push, draft GitHub PR, Checks, comments, and CI watching"));
+  assert.match(product.primary_workflows.find((item) => item.id === "repo-push-gate").approved_remote_command, /--push-branch.*--approve-remote/);
+});

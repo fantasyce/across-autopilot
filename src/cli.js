@@ -9,6 +9,8 @@ import { buildAutopilotEcosystemRoadmap } from "./ecosystem-roadmap.js";
 import { installAgentHost, installHostPlugin, uninstallHostPlugin } from "./installers.js";
 import { loadBuiltInSpecs } from "./loop-spec.js";
 import { renderHealth, renderPluginManifest, renderPluginStatus } from "./plugin-manifest.js";
+import { runRepoPushGateWithGitHub } from "./github-remote.js";
+import { gateExitCode, writeGateResult } from "./repo-gate.js";
 import { buildReview, fetchSourceStatuses, loadSources, writeReview } from "./review.js";
 import { discoverExternalSkills } from "./skill-radar.js";
 import { latestCandidate, loadState, recordCandidate, saveState } from "./state.js";
@@ -34,6 +36,35 @@ async function main(argv) {
   if (command === "status") {
     const parsed = parseArgs(rest);
     return printPayload(await loadState({ env: process.env }), parsed);
+  }
+
+  if (command === "gate" || command === "repo-push-gate") {
+    const parsed = parseArgs(rest);
+    const result = await runRepoPushGateWithGitHub({
+      repo: required(parsed.repo, "--repo"),
+      baseRef: parsed["base-ref"],
+      headRef: parsed["head-ref"],
+      maxRepairs: parsed["max-repairs"],
+      configPath: parsed["config-path"],
+      branch: parsed.branch,
+      commit: parsed.commit,
+      expectedBaseSha: parsed["expected-base-sha"],
+      repairRound: parsed["repair-round"],
+      ciPath: parsed["ci-path"],
+      ciWaitSeconds: parsed["ci-wait-seconds"],
+      ciPollMs: parsed["ci-poll-ms"],
+      draftPr: Boolean(parsed["draft-pr"]),
+      pushBranch: Boolean(parsed["push-branch"]),
+      approveRemote: Boolean(parsed["approve-remote"]),
+      watchCi: parsed["watch-ci"],
+      ciIdleTimeoutMs: parsed["ci-idle-timeout-ms"],
+      ciMaxWallTimeoutMs: parsed["ci-max-wall-timeout-ms"],
+      ciMaxLogBytes: parsed["ci-max-log-bytes"]
+    });
+    if (parsed.output) await writeGateResult(result, parsed.output);
+    printPayload(result, parsed);
+    process.exitCode = gateExitCode(result);
+    return;
   }
 
   if (command === "loop") {
@@ -143,6 +174,8 @@ async function main(argv) {
         readiness: evidence.status === "completed" && !evidence.risks?.length ? "ready" : "attention",
         gates: evidence.gates,
         outputs: evidence.outputs,
+        normalized_findings: evidence.candidate?.normalized_findings || [],
+        push_receipt: evidence.candidate?.push_receipt || null,
         memory: evidence.memory
       }, parsed);
     }
@@ -408,7 +441,7 @@ function parseArgs(args) {
       continue;
     }
     const key = arg.slice(2);
-    if (["json", "fetch", "foreground", "follow", "async", "return-task-id"].includes(key)) {
+    if (["json", "fetch", "foreground", "follow", "async", "return-task-id", "push-branch", "draft-pr", "approve-remote"].includes(key)) {
       parsed[key] = true;
       continue;
     }
@@ -427,6 +460,8 @@ function printHelp() {
   console.log(`Usage: across-autopilot <command> [options]
 
 Commands:
+  gate --repo path [--base-ref ref] [--head-ref ref] [--max-repairs n] [--ci-path status.json] [--push-branch] [--draft-pr] [--approve-remote] [--watch-ci true|false] [--ci-idle-timeout-ms n] [--ci-max-wall-timeout-ms n] [--output evidence.json] --json
+  repo-push-gate --repo path [--base-ref ref] [--head-ref ref] [--max-repairs n] --json
   loop validate --spec path --json
   loop dry-run --spec path --json
   loop run --spec path [--async --return-task-id] --json
@@ -460,7 +495,7 @@ Commands:
   candidate-plan --goal text --target-product product --json
   create-candidate --goal text --target-product product --json
   evaluate-candidate [--candidate id] [--evidence evidence.json] --json
-  promotion-report [--candidate id] --json
+  promotion-report [--candidate id|--run-id id] --json
   plugin-manifest --json
   plugin-status --json
   ecosystem-roadmap --json
@@ -474,6 +509,11 @@ Commands:
   install <codex-mcp|claude-code|claude-desktop> [--stdout] [--config-file path]
   uninstall host-plugin --across-home path
   mcp
+
+Gate exit codes:
+  0  Completed result with gate_verdict=pass, including no-op.
+  2  Completed result with gate_verdict=warn, blocked, fail, or unknown.
+  1  Usage or runtime failure before a gate result is produced.
 `);
 }
 

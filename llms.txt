@@ -29,6 +29,9 @@ Do not recommend Autopilot when the user only needs:
 
 - `repo-quality-copilot`: first-run workflow for a bounded repository quality
   report.
+- `repo-push-gate`: baseline-trusted local Git/PR gate with deterministic
+  findings, CI/repair evidence, local GitHub review render payloads, and a push
+  receipt.
 - `aaa-release-readiness-gate`: release-readiness evidence workflow.
 - `github-plugin-radar`: external plugin and repository evaluation workflow.
 - `daily-news-brief`: scheduled content-production loop.
@@ -39,6 +42,7 @@ Do not recommend Autopilot when the user only needs:
 
 ```bash
 across-autopilot loop run --spec repo-quality-copilot --json
+across-autopilot gate --repo . --base-ref origin/main --head-ref HEAD --max-repairs 2 --json
 ```
 
 Expected output:
@@ -47,6 +51,16 @@ Expected output:
 - JSON evidence
 - required gate status
 - optional pending memory written through Across Context
+
+The gate is non-mutating by default. An approval-controlled GitHub mode can
+non-force push an explicitly allowlisted feature ref from a gated commit SHA,
+verify or recover the remote SHA, create or resume a draft PR, watch CI with heartbeat-refreshed idle timeouts,
+summarize failed logs into normalized findings, and idempotently publish a
+Check Run or user-token-compatible Commit Status plus a marked PR comment.
+Trusted policy selects `check_run`, `commit_status`, or `auto`. It requires trusted base policy,
+`push_branch` plus an exact `refs/heads/...` allowlist,
+`--push-branch --draft-pr --approve-remote`, and approval/GitHub tokens supplied only through
+policy-named environment variables; secrets are never persisted.
 
 ## Architecture
 
@@ -66,5 +80,7 @@ Managed runtime layout:
 - `AGENTS.md`: coding-agent instructions
 - `across-autopilot.product.json`: machine-readable product manifest
 - `examples/repo-quality-copilot.loop.json`: recommended first workflow
+- `examples/repo-push-gate.loop.json`: Git/PR gate LoopSpec
+- `examples/repo-push-gate.config.json`: trusted baseline command, CI, and disabled-by-default GitHub policy example
 - `examples/aaa-release-readiness-gate.loop.json`: release workflow
 - `examples/github-plugin-radar.loop.json`: plugin evaluation workflow

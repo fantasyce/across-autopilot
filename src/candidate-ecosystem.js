@@ -16,6 +16,7 @@ import {
   recordGeneratedAutonomousBacklog,
   targetGenerationPolicy
 } from "./loop-state.js";
+import { buildPushReceipt, normalizeQualityFindings } from "./findings.js";
 
 const exec = promisify(execFile);
 
@@ -126,7 +127,7 @@ missing = []
 checked = 0
 for checked_path in contract_paths():
     tree = ast.parse(checked_path.read_text(encoding="utf-8"), str(checked_path))
-    for node in tree.body:
+    for node in ast.walk(tree):
         if not isinstance(node, ast.ImportFrom):
             continue
         module = node.module or ""
@@ -699,7 +700,7 @@ export async function runHostCodeIteration({ spec, run, actions, env = process.e
     const before = await readOptional(target);
     const content = String(patch.content || "");
     if (!content.trim()) throw ecosystemFailure("host_code_iteration", `Patch content is empty for ${rel}`);
-    const next = applyCandidatePatch(before || "", patch, rel);
+    const next = normalizeCandidateSourceContent(applyCandidatePatch(before || "", patch, rel), rel);
     await writeFile(target, next, "utf8");
     applied.push({
       repo: targetRepo,
@@ -711,14 +712,15 @@ export async function runHostCodeIteration({ spec, run, actions, env = process.e
     });
   }
   const changed = applied.some((item) => item.changed) || preRepairResets.some((item) => item.changed);
-  if (!changed && request.validation_feedback.length) {
-    const latest = request.validation_feedback[0] || {};
-    const diagnosticKind = latest.diagnostic?.failure_kind || latest.type || "validation_feedback";
-    throw ecosystemFailure(
-      "host_code_iteration",
-      `Host code iteration repair produced no file changes while ${diagnosticKind} remains unresolved.`
-    );
-  }
+  const noopRepair = !changed && request.validation_feedback.length
+    ? {
+      status: "attention",
+      reason: "repair_patches_made_no_file_changes",
+      unresolved_feedback_kind: request.validation_feedback[0]?.diagnostic?.failure_kind
+        || request.validation_feedback[0]?.type
+        || "validation_feedback"
+    }
+    : null;
   return {
     status: changed ? "passed" : "attention",
     candidate_id: config.candidate_id,
@@ -733,7 +735,10 @@ export async function runHostCodeIteration({ spec, run, actions, env = process.e
     repaired_json: Boolean(response.repaired_json),
     text_fallback: Boolean(response.text_fallback),
     host_validation_repair_fallback: Boolean(response.host_validation_repair_fallback),
-    summary: response.summary || response.decision?.summary || "Host code iteration applied candidate patches.",
+    summary: response.summary || response.decision?.summary || (noopRepair
+      ? "Host code iteration repair produced no file changes; validation will decide whether prior feedback is still active."
+      : "Host code iteration applied candidate patches."),
+    noop_repair: noopRepair,
     strategy: strategy ? {
       target_id: strategy.target_id || null,
       source_refs: asArray(strategy.source_refs),
@@ -1292,7 +1297,7 @@ export async function candidateEcosystemDiff({ spec, run, actions, env = process
     ]).filter((path) => !isGeneratedCandidateArtifact(path));
     const qualityFindings = [];
     for (const path of changed) {
-      qualityFindings.push(...await sourceQualityFindings(repo.target, path));
+      qualityFindings.push(...await sourceQualityFindings(repo.target, path, { spec }));
     }
     qualityFindings.push(...destructiveProductEntrypointFindings(repo.id, numstatText));
     qualityFindings.push(...candidateIntegrationQualityFindings(spec, repo.id, changed, untracked));
@@ -1306,6 +1311,10 @@ export async function candidateEcosystemDiff({ spec, run, actions, env = process
       git_numstat: numstatText,
       doc_churn: parseDocChurn(numstatText),
       quality_findings: qualityFindings,
+      normalized_findings: normalizeQualityFindings(qualityFindings.map((finding) => ({
+        ...finding,
+        repo: repo.id || finding.repo || null
+      }))),
       ignored_generated_artifacts: ignoredGeneratedArtifacts
     });
   }
@@ -1433,7 +1442,11 @@ function candidateQualityValidationResults(actions) {
           failure_summary: "Candidate quality findings blocked validation.",
           exit_code: null
         },
-        quality_findings: findings.slice(0, 20)
+        quality_findings: findings.slice(0, 20),
+        normalized_findings: normalizeQualityFindings(findings.slice(0, 20).map((finding) => ({
+          ...finding,
+          repo: repo.id || finding.repo || null
+        })))
       };
     })
     .filter(Boolean);
@@ -1841,6 +1854,7 @@ export function buildCandidatePromotionEvidence({ spec, run, actions }) {
   const qualityFindings = candidateQualityFindings(diff);
   const blockingQuality = qualityFindings.filter((finding) => finding.severity === "error");
   const sourceRefPins = sourceRefPinsFromAcquire(acquire, validation.source_unchanged);
+  const normalizedFindings = normalizeQualityFindings(qualityFindings);
   const ready = changedFiles.length > 0
     && validationPassed
     && appLifecyclePassed
@@ -1869,6 +1883,15 @@ export function buildCandidatePromotionEvidence({ spec, run, actions }) {
     strategy,
     mutation,
     changedFiles,
+    ready
+  });
+  const pushReceipt = buildCandidatePushReceipt({
+    spec,
+    acquire,
+    diff,
+    validation,
+    sourceRefPins,
+    normalizedFindings,
     ready
   });
   return {
@@ -1900,6 +1923,8 @@ export function buildCandidatePromotionEvidence({ spec, run, actions }) {
     changed_file_count: changedFiles.length,
     repos: candidateRepoEvidence(diff),
     quality_findings: qualityFindings,
+    normalized_findings: normalizedFindings,
+    push_receipt: pushReceipt,
     ignored_generated_artifacts: candidateIgnoredGeneratedArtifacts(diff),
     validation: {
       status: validation.status || "unknown",
@@ -1993,6 +2018,8 @@ export function buildCandidatePromotionEvidence({ spec, run, actions }) {
         llm_status: appLifecycle.llm_status || null
       } : null,
       reviewer_scores: reviewerScores,
+      normalized_findings: normalizedFindings,
+      push_receipt: pushReceipt,
       reviewer_model: semantic ? {
         model_backed: Boolean(semantic.reviewer_model_backed),
         provider: semantic.reviewer_provider || null,
@@ -2010,6 +2037,40 @@ export function buildCandidatePromotionEvidence({ spec, run, actions }) {
   };
 }
 
+function buildCandidatePushReceipt({ spec = {}, acquire = {}, diff = {}, validation = {}, sourceRefPins = {}, normalizedFindings = [], ready = false } = {}) {
+  return buildPushReceipt({
+    repository: {
+      name: acquire.four_repo_manifest ? "across-ecosystem" : (spec.id || "candidate"),
+      path: null,
+      remote: null
+    },
+    base_ref: sourceRefPins.status === "passed" ? "source-ref-pins" : null,
+    head_ref: acquire.candidate_id ? `candidate:${acquire.candidate_id}` : null,
+    head_sha: null,
+    dirty_tree: false,
+    diff_summary: {
+      changed_files: asArray(diff.changed_files),
+      additions: 0,
+      deletions: 0,
+      text: `${asArray(diff.changed_files).length} changed file(s)`
+    },
+    findings: normalizedFindings,
+    gate_verdict: candidateGateVerdict({ ready, validation, sourceRefPins, normalizedFindings })
+  });
+}
+
+function candidateGateVerdict({ ready = false, validation = {}, sourceRefPins = {}, normalizedFindings = [] } = {}) {
+  if (ready) return "pass";
+  if (normalizeFindingsHaveBlockingState(normalizedFindings)) return "blocked";
+  if ((validation.status && validation.status !== "passed") || (sourceRefPins.status && sourceRefPins.status !== "passed")) return "fail";
+  if (normalizedFindings.length) return "warn";
+  return "unknown";
+}
+
+function normalizeFindingsHaveBlockingState(findings = []) {
+  return asArray(findings).some((finding) => ["ask_user", "blocked", "failed"].includes(finding.state));
+}
+
 function targetRepoPath(acquire, repoId) {
   if (!repoId) return null;
   return asArray(acquire.repos).find((repo) => repo.id === repoId)?.target || null;
@@ -2022,6 +2083,12 @@ function candidateRepoEvidence(diff) {
     changed_file_count: repo.changed_file_count || 0,
     changed_files: asArray(repo.changed_files),
     quality_findings: asArray(repo.quality_findings),
+    normalized_findings: asArray(repo.normalized_findings).length
+      ? asArray(repo.normalized_findings)
+      : normalizeQualityFindings(asArray(repo.quality_findings).map((finding) => ({
+        ...finding,
+        repo: repo.id || finding.repo || null
+      }))),
     ignored_generated_artifacts: asArray(repo.ignored_generated_artifacts),
     doc_churn: asArray(repo.doc_churn)
   }));
@@ -2350,13 +2417,14 @@ async function runHostReviewDecision({
   candidateModelLease,
   env
 }) {
+  const reviewStrategy = reviewStrategySnapshot(strategy);
   const request = {
     schema_version: "across-host-review-decision-request/1.0",
     goal: strategy?.goal || spec.pack_config?.research_strategy?.goal || spec.description || spec.name,
     run_id: run?.run_id || null,
     spec_id: spec.id,
-    selected_target_id: strategy?.target_id || strategy?.target_id || null,
-    selected_iteration: strategy || null,
+    selected_target_id: reviewStrategy?.target_id || null,
+    selected_iteration: reviewStrategy,
     changed_files: changedFiles,
     validation: {
       status: validation.status || null,
@@ -2389,6 +2457,36 @@ async function runHostReviewDecision({
     maxBuffer: 4 * 1024 * 1024
   });
   return normalizeHostReviewDecision(response);
+}
+
+function reviewStrategySnapshot(strategy) {
+  if (!strategy || typeof strategy !== "object") return null;
+  const semanticReview = strategy.semantic_review && typeof strategy.semantic_review === "object"
+    ? {
+      require_model_backed: strategy.semantic_review.require_model_backed,
+      require_selected_target_change: strategy.semantic_review.require_selected_target_change,
+      reject_self_proof_only: strategy.semantic_review.reject_self_proof_only,
+      reject_test_only_change: strategy.semantic_review.reject_test_only_change,
+      independent_reviewer_required: strategy.semantic_review.independent_reviewer_required,
+      require_distinct_model: strategy.semantic_review.require_distinct_model,
+      minimum_validation_commands: strategy.semantic_review.minimum_validation_commands,
+      allow_replay_fixture_only: strategy.semantic_review.allow_replay_fixture_only
+    }
+    : null;
+  return {
+    target_id: strategy.target_id || null,
+    target_repo: strategy.target_repo || null,
+    goal: strategy.goal || null,
+    allowed_patch_paths: asArray(strategy.allowed_patch_paths).map(String).slice(0, 40),
+    context_files: asArray(strategy.context_files).map(String).slice(0, 20),
+    source_refs: asArray(strategy.source_refs).map(String).slice(0, 20),
+    risk: strategy.risk || null,
+    score: strategy.score ?? null,
+    tool_packs: asArray(strategy.tool_packs).map(String).slice(0, 20),
+    generated_from: strategy.generated_from || null,
+    validation_command_count: asArray(strategy.validation_commands).length,
+    semantic_review: semanticReview
+  };
 }
 
 function buildHostReviewTimeoutFallbackDecision({
@@ -2662,15 +2760,23 @@ function destructiveProductEntrypointFindings(repoId, numstatText) {
     .filter(Boolean);
 }
 
-async function sourceQualityFindings(repoRoot, path) {
+async function sourceQualityFindings(repoRoot, path, options = {}) {
   if (!isSourceCodePath(path)) return [];
   const content = await readOptional(join(repoRoot, path));
   if (!content || content.length > 250_000) return [];
-  return sourceQualityFindingsForContent(content, path);
+  return sourceQualityFindingsForContent(content, path, options);
 }
 
 function sourceQualityFindingsFromDiff(diff) {
   return allSourceQualityFindingsFromDiff(diff).filter((item) => item.severity === "error");
+}
+
+function normalizeCandidateSourceContent(content, path) {
+  if (!isSourceCodePath(path)) return content;
+  return String(content || "")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+$/g, ""))
+    .join("\n");
 }
 
 function allSourceQualityFindingsFromDiff(diff) {
@@ -2681,7 +2787,7 @@ function allSourceQualityFindingsFromDiff(diff) {
   })));
 }
 
-function sourceQualityFindingsForContent(content, path) {
+function sourceQualityFindingsForContent(content, path, options = {}) {
   const findings = [];
   const rules = [
     ...(isTestPath(path) ? [{
@@ -2792,6 +2898,7 @@ function sourceQualityFindingsForContent(content, path) {
       }
     }
   });
+  findings.push(...brittleDynamicListAssertionFindings(lines, path, options));
   findings.push(...functionLengthFindings(lines, path));
   const nonblank = lines.filter((line) => line.trim()).length;
   if (nonblank > 260) {
@@ -2805,6 +2912,29 @@ function sourceQualityFindingsForContent(content, path) {
     });
   }
   return findings;
+}
+
+function brittleDynamicListAssertionFindings(lines, path, options = {}) {
+  if (!isTestPath(path)) return [];
+  const strictSelfIteration = options?.spec?.pack_config?.candidate_quality?.require_resilient_dynamic_assertions === true
+    || /^aaa-autonomous-self-iteration/.test(String(options?.spec?.id || ""));
+  if (!strictSelfIteration) return [];
+  const dynamicKeyPattern = /["'](?:promotion_readiness_required_evidence_gap|required_evidence_gap|required_evidence_by_gate|remaining_gates|remaining_required_gates|planning_checklist|planned_required_gates|human_promotion_readiness|builder_readiness_plan|ready_tool_packs|tool_pack_statuses)["']/;
+  const findings = [];
+  lines.forEach((line, index) => {
+    if (!/\bassert\b/.test(line)) return;
+    if (!dynamicKeyPattern.test(line)) return;
+    if (!/==\s*\[/.test(line)) return;
+    findings.push({
+      id: "brittle_dynamic_list_assertion",
+      severity: "error",
+      path,
+      line: index + 1,
+      message: "brittle_dynamic_list_assertion: candidate tests for dynamic gate/evidence/status outputs must assert stable invariants, set membership, subset coverage, or key presence instead of exact ordered full-list equality",
+      excerpt: line.trim().slice(0, 240)
+    });
+  });
+  return findings.slice(0, 3);
 }
 
 function functionLengthFindings(lines, path) {

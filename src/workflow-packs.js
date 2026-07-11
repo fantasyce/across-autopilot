@@ -17,6 +17,7 @@ const FALLBACK_CAPABILITIES = Object.freeze([
   "action.workflow_pack_export",
   "action.manifest_inspection",
   "action.dependency_risk_check",
+  "action.repo_push_gate",
   "action.license_check",
   "action.compatibility_scoring",
   "action.quality_gate_evaluation",
@@ -42,6 +43,17 @@ const MARKET_PROFILES = Object.freeze({
     time_to_value: "under 2 minutes",
     no_model_required: true,
     trust_receipt_title: "Repository Quality Trust Receipt"
+  },
+  "repo-push-gate": {
+    primary_user: "maintainers preparing a local push or draft pull request",
+    user_problem: "I need branch checks to use trusted baseline commands and produce a reviewable receipt.",
+    job_to_be_done: "Bind a branch diff to deterministic quality and security evidence before remote mutation.",
+    headline: "Gate a local repository push with baseline-trusted commands and a deterministic receipt.",
+    why_now: "Agent-written branches make command provenance and evidence binding part of the review boundary.",
+    competitive_position: "Across turns local checks into a bounded push receipt without replacing Git or GitHub.",
+    time_to_value: "under 5 minutes",
+    no_model_required: true,
+    trust_receipt_title: "Repository Push Gate Receipt"
   },
   "release-captain": {
     primary_user: "small teams preparing app or plugin releases",
@@ -79,6 +91,27 @@ const MARKET_PROFILES = Object.freeze({
 });
 
 export const BUILT_IN_WORKFLOW_PACKS = Object.freeze({
+  "repo-push-gate": {
+    schema_version: WORKFLOW_PACK_SCHEMA,
+    id: "repo-push-gate",
+    title: "Repository Push Gate",
+    description: "Baseline-trusted Git and PR quality gate with deterministic evidence plus optional approval-controlled feature-branch push and draft GitHub mutation.",
+    loop_spec_id: "repo-push-gate",
+    cli_command: "across-autopilot gate --repo . --base-ref origin/main --head-ref HEAD --json",
+    autonomy_level: 4,
+    host_targets: HOST_TARGETS,
+    required_capabilities: [
+      "source.directory",
+      "action.repo_push_gate",
+      "action.quality_gate_evaluation",
+      "output.markdown_report",
+      "output.json_artifact",
+      "memory.pending_summary"
+    ],
+    runtime_policy: approvedGitHubDraftPolicy(),
+    boundaries: boundary("host_approved_exact_feature_push_and_draft_pr_only"),
+    artifacts: ["run://repo-push-gate/report.md", "run://repo-push-gate/evidence.json", "context://pending"]
+  },
   "repo-quality-copilot": {
     schema_version: WORKFLOW_PACK_SCHEMA,
     id: "repo-quality-copilot",
@@ -172,7 +205,7 @@ export const BUILT_IN_WORKFLOW_PACKS = Object.freeze({
     runtime_policy: {
       ...readOnlyPolicy("medium"),
       filesystem_policy: "candidate_workspace_only",
-      budget: { max_model_calls: 8, max_candidate_repairs: 3, max_usd: 0 }
+      budget: { max_model_calls: 10, max_candidate_repairs: 5, max_usd: 0 }
     },
     boundaries: boundary("candidate_workspace_only"),
     artifacts: ["run://iteration/report.md", "run://iteration/evidence.json", "context://pending"]
@@ -296,7 +329,7 @@ export function renderWorkflowPackProductCard(pack, { registry = null } = {}) {
   const market = marketProfile(pack);
   const hostTargets = asArray(pack.host_targets);
   const quickstart = {
-    cli: `across-autopilot loop run --spec ${pack.loop_spec_id} --json`,
+    cli: pack.cli_command || `across-autopilot loop run --spec ${pack.loop_spec_id} --json`,
     host_prompt: `Run the Across ${pack.title} workflow. Keep the run bounded, preserve the trust receipt, and do not merge, publish, sign, or write secrets.`,
     time_to_value: market.time_to_value,
     no_model_required: Boolean(market.no_model_required)
@@ -584,6 +617,22 @@ function readOnlyPolicy(riskProfile) {
     budget: { max_model_calls: 0, max_candidate_repairs: 0, max_usd: 0 },
     promotion: {
       human_approval_required: true,
+      merge_release_signing_blocked: true
+    }
+  };
+}
+
+function approvedGitHubDraftPolicy() {
+  return {
+    risk_profile: "release",
+    network_policy: { mode: "allowlist", allowlist: ["github.com", "api.github.com"] },
+    filesystem_policy: "read_only",
+    budget: { max_model_calls: 0, max_candidate_repairs: 0, max_usd: 0 },
+    promotion: {
+      human_approval_required: true,
+      exact_feature_branch_push_only: true,
+      force_push_blocked: true,
+      draft_pull_request_only: true,
       merge_release_signing_blocked: true
     }
   };

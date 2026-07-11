@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { EVIDENCE_SCHEMA, normalizeRuntimePolicy } from "./loop-spec.js";
 import { stableJson } from "./json-utils.js";
 import { buildRoleEvidence } from "./roles.js";
+import { buildPushReceipt, normalizeQualityFindings } from "./findings.js";
 
 export const EVIDENCE_GRAPH_SCHEMA = "across-evidence-graph/1.0";
 
@@ -153,6 +154,16 @@ function candidateEvidence(actions) {
   const strategy = lastActionResult(actions, "product_iteration_strategy");
   const promotion = lastActionResult(actions, "promotion_report_generation");
   if (!acquire && !strategy && !mutation && !diff && !validation && !appLifecycle && !probe && !semantic && !promotion) return null;
+  const qualityFindings = candidateQualityFindings(diff);
+  const normalizedFindings = Array.isArray(promotion?.normalized_findings)
+    ? promotion.normalized_findings
+    : normalizeQualityFindings(qualityFindings);
+  const pushReceipt = promotion?.push_receipt || buildCandidatePushReceiptProjection({
+    acquire,
+    diff,
+    validation,
+    normalizedFindings
+  });
   return {
     schema_version: "across-autopilot-candidate-evidence/1.0",
     candidate_id: acquire?.candidate_id || mutation?.candidate_id || promotion?.candidate_id || null,
@@ -189,7 +200,9 @@ function candidateEvidence(actions) {
       decision_hash: mutation?.decision_hash || promotion?.decision_hash || null
     },
     repos: candidateRepoEvidence(diff),
-    quality_findings: candidateQualityFindings(diff),
+    quality_findings: qualityFindings,
+    normalized_findings: normalizedFindings,
+    push_receipt: pushReceipt,
     ignored_generated_artifacts: candidateIgnoredGeneratedArtifacts(diff),
     validation: validation
       ? {
@@ -264,6 +277,12 @@ function candidateRepoEvidence(diff) {
     changed_file_count: repo.changed_file_count || 0,
     changed_files: repo.changed_files || [],
     quality_findings: repo.quality_findings || [],
+    normalized_findings: Array.isArray(repo.normalized_findings)
+      ? repo.normalized_findings
+      : normalizeQualityFindings((repo.quality_findings || []).map((finding) => ({
+        ...finding,
+        repo: repo.id || finding.repo || null
+      }))),
     ignored_generated_artifacts: repo.ignored_generated_artifacts || [],
     doc_churn: repo.doc_churn || []
   }));
@@ -275,6 +294,37 @@ function candidateQualityFindings(diff) {
     ...finding,
     repo: repo.id || finding.repo || null
   })));
+}
+
+function buildCandidatePushReceiptProjection({ acquire = null, diff = null, validation = null, normalizedFindings = [] } = {}) {
+  const changedFiles = diff?.changed_files || [];
+  return buildPushReceipt({
+    repository: {
+      name: acquire?.four_repo_manifest ? "across-ecosystem" : "candidate",
+      path: null,
+      remote: null
+    },
+    base_ref: null,
+    head_ref: acquire?.candidate_id ? `candidate:${acquire.candidate_id}` : null,
+    head_sha: null,
+    dirty_tree: false,
+    diff_summary: {
+      changed_files: changedFiles,
+      additions: 0,
+      deletions: 0,
+      text: `${changedFiles.length} changed file(s)`
+    },
+    findings: normalizedFindings,
+    gate_verdict: evidenceProjectionGateVerdict({ validation, normalizedFindings, changedFiles })
+  });
+}
+
+function evidenceProjectionGateVerdict({ validation = null, normalizedFindings = [], changedFiles = [] } = {}) {
+  if (normalizedFindings.some((finding) => ["ask_user", "blocked", "failed"].includes(finding.state))) return "blocked";
+  if (validation?.status && validation.status !== "passed") return "fail";
+  if (changedFiles.length && validation?.status === "passed") return "pass";
+  if (normalizedFindings.length) return "warn";
+  return "unknown";
 }
 
 function candidateIgnoredGeneratedArtifacts(diff) {
