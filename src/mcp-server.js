@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { buildAgentPluginRunPlan, normalizeAgentPluginManifest } from "./agent-plugin-contract.js";
 import { compactLoopMemoryByEvidenceGraph } from "./loop-memory-compaction.js";
-import { discoverExternalSkills } from "./skill-radar.js";
+import { assessCapabilityTrust, discoverExternalSkills, resolveCapabilities } from "./skill-radar.js";
 import { superviseAgentPluginSession } from "./host-session-supervisor.js";
 import { AutopilotSupervisor } from "./supervisor.js";
 import { loadState } from "./state.js";
@@ -304,6 +304,31 @@ async function handleLine(line) {
           { name: "migrate_loop_spec", description: "Migrate and validate a LoopSpec." },
           { name: "get_loop_telemetry", description: "Get aggregate loop telemetry." },
           { name: "discover_external_skills", description: "Discover local Codex, Claude Code, and Qwen Code skills as redacted radar input." },
+          {
+            name: "assess_capability_trust",
+            description: "Statically assess a Skill directory or generic plugin manifest for deterministic trust risks without returning raw matched content.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                path: { type: "string" },
+                manifest: { type: "object" }
+              }
+            }
+          },
+          {
+            name: "resolve_capabilities",
+            description: "Automatically select healthy trusted capabilities for workflow requirements, requesting explicit decisions only when blocked or ambiguous.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                workflow_requirements: { type: "array", items: { anyOf: [{ type: "string" }, { type: "object" }] } },
+                requirements: { type: "array", items: { anyOf: [{ type: "string" }, { type: "object" }] } },
+                available_manifests: { type: "array", items: { type: "object" } },
+                manifests: { type: "array", items: { type: "object" } },
+                available_capabilities: { type: "array", items: { type: "object" } }
+              }
+            }
+          },
           { name: "compact_loop_memory", description: "Compact loop memory by evidence-graph node for just-in-time retrieval." },
           { name: "set_loop_spec_paused", description: "Pause or resume a LoopSpec." },
           { name: "set_adapter_paused", description: "Pause or resume an adapter." },
@@ -365,6 +390,8 @@ async function handleLine(line) {
       if (name === "migrate_loop_spec") return respondText(id, (await supervisor.validateSpec(required(args.spec))).migration);
       if (name === "get_loop_telemetry") return respondText(id, await supervisor.telemetry());
       if (name === "discover_external_skills") return respondText(id, await discoverExternalSkills({ roots: args.roots || args.root }));
+      if (name === "assess_capability_trust") return respondText(id, await assessCapabilityTrust(required(args.path || args.manifest)));
+      if (name === "resolve_capabilities") return respondText(id, resolveCapabilities(args));
       if (name === "compact_loop_memory") return respondText(id, compactLoopMemoryByEvidenceGraph(args.graph || args.evidence || args));
       if (name === "set_loop_spec_paused") return respondText(id, await supervisor.setSpecPaused(required(args.spec_id), Boolean(args.paused)));
       if (name === "set_adapter_paused") return respondText(id, await supervisor.setAdapterPaused(required(args.adapter_id), Boolean(args.paused)));

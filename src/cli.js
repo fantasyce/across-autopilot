@@ -12,7 +12,7 @@ import { renderHealth, renderPluginManifest, renderPluginStatus } from "./plugin
 import { runRepoPushGateWithGitHub } from "./github-remote.js";
 import { gateExitCode, writeGateResult } from "./repo-gate.js";
 import { buildReview, fetchSourceStatuses, loadSources, writeReview } from "./review.js";
-import { discoverExternalSkills } from "./skill-radar.js";
+import { assessCapabilityTrust, discoverExternalSkills, resolveCapabilities } from "./skill-radar.js";
 import { latestCandidate, loadState, recordCandidate, saveState } from "./state.js";
 import { AutopilotSupervisor } from "./supervisor.js";
 import {
@@ -210,8 +210,18 @@ async function main(argv) {
 
   if (command === "skills-radar") {
     const parsed = parseArgs(rest);
+    const action = parsed.positionals[0] || "discover";
+    if (action === "assess") {
+      return printPayload(await assessCapabilityTrust(required(parsed.path || parsed.manifest, "--path")), parsed);
+    }
     const roots = parsed.root ? (Array.isArray(parsed.root) ? parsed.root : [parsed.root]) : undefined;
     return printPayload(await discoverExternalSkills({ roots }), parsed);
+  }
+
+  if (command === "capability-resolve") {
+    const parsed = parseArgs(rest);
+    const input = JSON.parse(await readFile(resolve(required(parsed.input, "--input")), "utf8"));
+    return printPayload(resolveCapabilities(input), parsed);
   }
 
   if (command === "loop-memory-compact") {
@@ -501,6 +511,8 @@ Commands:
   ecosystem-roadmap --json
   ecosystem-roadmap [--agent-plugin-manifest path] --json
   skills-radar [--root path] --json
+  skills-radar assess --path skill-directory-or-manifest --json
+  capability-resolve --input requirements-and-manifests.json --json
   loop-memory-compact --evidence path --json
   agent-plugin validate --manifest path --json
   agent-plugin plan --manifest path --goal text --json

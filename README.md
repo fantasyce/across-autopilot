@@ -13,6 +13,13 @@ of a one-off chat prompt: repository quality checks, release-readiness reviews,
 plugin compatibility research, daily brief generation, and product iteration in
 candidate workspaces.
 
+Autopilot can assess external Skills and generic plugin manifests before they
+enter a loop. The deterministic trust receipt keeps findings and content hashes
+without raw secrets, distinguishes executable behavior from documentation
+examples, and blocks only strong active risk. Its capability resolver chooses a
+unique healthy trusted provider automatically and asks only when no safe option
+exists or equally safe options are genuinely ambiguous.
+
 It does not replace Across Agents Assistant, Across Orchestrator, or Across
 Context:
 
@@ -149,9 +156,15 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.3.0`. It is source-first and GitHub-first: hosts can
-install it from the `v0.3.0` tag as a managed Across plugin, and the npm package
+The current release is `v0.4.0`. It is source-first and GitHub-first: hosts can
+install it from the `v0.4.0` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.4.0` adds deterministic Skill and generic-plugin trust assessment. It
+separates executable behavior from documentation examples, records bounded
+content hashes without raw secrets, and resolves a unique safe healthy
+capability automatically while preserving explicit review for blocked or
+genuinely ambiguous choices.
 
 `v0.3.0` adds an approval-controlled GitHub delivery loop: exact non-force
 feature-branch push, resumable draft PRs, Actions heartbeats with separate idle
