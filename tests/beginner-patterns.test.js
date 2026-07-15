@@ -58,7 +58,27 @@ test("fresh-profile CLI runs every beginner mission without provider keys", asyn
   await writeFile(join(project, "LICENSE"), "MIT License\n");
   await writeFile(join(project, "README.md"), "# Beginner demo\n");
   const root = new URL("..", import.meta.url).pathname;
-  const contextCli = join(root, "..", "across-context", "src", "cli.js");
+  const contextCli = join(project, "context-fixture.mjs");
+  await writeFile(contextCli, `
+const command = process.argv[2];
+if (command === "recall-loop") {
+  console.log(JSON.stringify({
+    schema_version: "across-context-recall/1.0",
+    provider: "across-context",
+    result_count: 0,
+    results: []
+  }));
+} else if (command === "remember-loop") {
+  console.log(JSON.stringify({
+    schema_version: "across-context-loop-memory/1.0",
+    status: "accepted_pending",
+    memory_id: "mem-fixture"
+  }));
+} else {
+  console.error("unsupported context fixture command");
+  process.exitCode = 64;
+}
+`);
   for (const pattern of listBeginnerWorkflowPatterns().patterns) {
     const home = await mkdtemp(join(tmpdir(), `across-no-key-${pattern.id}-`));
     const env = {
