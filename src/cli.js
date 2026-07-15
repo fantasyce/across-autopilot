@@ -1,9 +1,16 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { buildAgentPluginRunPlan, normalizeAgentPluginManifest } from "./agent-plugin-contract.js";
 import { buildCandidatePlan, buildPromotionReport, createCandidate, evaluateCandidate } from "./candidates.js";
 import { compactLoopMemoryByEvidenceGraph } from "./loop-memory-compaction.js";
+import {
+  buildNoKeyDemo,
+  getBeginnerWorkflowPattern,
+  listBeginnerWorkflowPatterns,
+  renderNoKeyDemoResult
+} from "./beginner-patterns.js";
 import { AdapterRegistry } from "./adapter-registry.js";
 import { buildAutopilotEcosystemRoadmap } from "./ecosystem-roadmap.js";
 import { installAgentHost, installHostPlugin, uninstallHostPlugin } from "./installers.js";
@@ -78,6 +85,15 @@ async function main(argv) {
   if (command === "workflow-packs") {
     const parsed = parseArgs(rest);
     return printPayload(listWorkflowPacks(), parsed);
+  }
+
+  if (command === "beginner-patterns") {
+    const parsed = parseArgs(rest);
+    return printPayload(listBeginnerWorkflowPatterns(), parsed);
+  }
+
+  if (command === "beginner-pattern") {
+    return handleBeginnerPatternCommand(rest);
   }
 
   if (command === "workflow-pack") {
@@ -322,6 +338,29 @@ async function handleLoopCommand(args) {
   if (subcommand === "resume") return printPayload(await supervisor.setSpecPaused(required(parsed["spec-id"], "--spec-id"), false), parsed);
   if (subcommand === "quarantine-output") return printPayload(await supervisor.quarantineOutput(required(parsed["run-id"], "--run-id"), required(parsed.output, "--output")), parsed);
   throw new Error(`Unknown loop command: ${subcommand || ""}`);
+}
+
+async function handleBeginnerPatternCommand(args) {
+  const [subcommand = "show", ...rest] = args;
+  const parsed = parseArgs(rest);
+  const patternId = parsed.pattern || parsed.positionals[0] || "first-verified-task";
+  if (subcommand === "list") return printPayload(listBeginnerWorkflowPatterns(), parsed);
+  if (subcommand === "show") return printPayload(getBeginnerWorkflowPattern(patternId), parsed);
+  if (subcommand === "demo") return printPayload(buildNoKeyDemo(patternId), parsed);
+  if (subcommand === "run") {
+    const pattern = getBeginnerWorkflowPattern(patternId);
+    const goal = String(parsed.goal || "").trim();
+    if (!goal) throw new Error("--goal is required for a beginner-pattern run");
+    const supervisor = new AutopilotSupervisor();
+    const goalDigest = createHash("sha256").update(goal).digest("hex");
+    const trigger = `beginner:${pattern.id}:goal:${goalDigest.slice(0, 16)}`;
+    const result = await supervisor.run(pattern.loop_spec_id, { trigger });
+    const compact = renderNoKeyDemoResult(pattern.id, result, { goal });
+    printPayload(compact, parsed);
+    if (compact.status !== "completed") process.exitCode = 1;
+    return;
+  }
+  throw new Error(`Unknown beginner-pattern command: ${subcommand}`);
 }
 
 async function handleAdapterCommand(args) {

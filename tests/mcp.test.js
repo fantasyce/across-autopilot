@@ -112,6 +112,9 @@ test("mcp server exposes generic agent plugin validation and planning", async ()
     assert.ok(responses[3].result.tools.some((tool) => tool.name === "get_workflow_pack_protocol_readiness"));
     assert.ok(responses[3].result.tools.some((tool) => tool.name === "get_workflow_pack_trust_receipt"));
     assert.ok(responses[3].result.tools.some((tool) => tool.name === "get_workflow_pack_frontier_interop"));
+    assert.ok(responses[3].result.tools.some((tool) => tool.name === "list_beginner_workflow_patterns"));
+    assert.ok(responses[3].result.tools.some((tool) => tool.name === "get_no_key_demo"));
+    assert.ok(responses[3].result.tools.some((tool) => tool.name === "run_no_key_demo"));
     assert.ok(responses[3].result.tools.some((tool) => tool.name === "start_async_loop_task"));
     assert.ok(responses[3].result.tools.some((tool) => tool.name === "discover_external_skills"));
     assert.ok(responses[3].result.tools.some((tool) => tool.name === "compact_loop_memory"));
