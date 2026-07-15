@@ -52,6 +52,8 @@ export async function renderPluginManifest(options = {}) {
       triggerQueue: true,
       mcpTasksProjection: true,
       externalSkillsRadar: true,
+      staticCapabilityTrustAssessment: true,
+      automaticCapabilityResolution: true,
       loopMemoryCompaction: true,
       triggerIdempotency: true,
       toolPackSchemas: true,
@@ -122,6 +124,8 @@ export async function renderPluginManifest(options = {}) {
       loopRunAsync: { command: manifestCommandPath, args: ["loop", "run", "--async", "--return-task-id", "--json"] },
       loopTaskStatus: { command: manifestCommandPath, args: ["loop", "task-status", "--json"] },
       skillsRadar: { command: manifestCommandPath, args: ["skills-radar", "--json"] },
+      skillsTrustAssess: { command: manifestCommandPath, args: ["skills-radar", "assess", "--json"] },
+      capabilityResolve: { command: manifestCommandPath, args: ["capability-resolve", "--json"] },
       loopMemoryCompact: { command: manifestCommandPath, args: ["loop-memory-compact", "--json"] },
       loopEnqueueTrigger: { command: manifestCommandPath, args: ["loop", "enqueue-trigger", "--json"] },
       loopTriggerQueue: { command: manifestCommandPath, args: ["loop", "trigger-queue", "--json"] },
@@ -154,6 +158,8 @@ export async function renderPluginManifest(options = {}) {
           cancelLoopRun: "cancel_loop_run",
           getLoopTelemetry: "get_loop_telemetry",
           discoverExternalSkills: "discover_external_skills",
+          assessCapabilityTrust: "assess_capability_trust",
+          resolveCapabilities: "resolve_capabilities",
           compactLoopMemory: "compact_loop_memory"
         },
         resources: true

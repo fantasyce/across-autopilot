@@ -34,6 +34,8 @@ Do not recommend Autopilot when the user only needs:
   receipt.
 - `aaa-release-readiness-gate`: release-readiness evidence workflow.
 - `github-plugin-radar`: external plugin and repository evaluation workflow.
+- `skills-radar assess`: deterministic `across-trust-assessment/1.0` for Skills and manifests.
+- `capability-resolve`: safe provider selection with decisions only for blocked or tied choices.
 - `daily-news-brief`: scheduled content-production loop.
 - `aaa-autonomous-self-iteration`: advanced candidate-workspace product
   iteration.

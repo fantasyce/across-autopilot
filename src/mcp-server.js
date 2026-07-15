@@ -1,9 +1,16 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { buildAgentPluginRunPlan, normalizeAgentPluginManifest } from "./agent-plugin-contract.js";
+import {
+  buildNoKeyDemo,
+  getBeginnerWorkflowPattern,
+  listBeginnerWorkflowPatterns,
+  renderNoKeyDemoResult
+} from "./beginner-patterns.js";
 import { compactLoopMemoryByEvidenceGraph } from "./loop-memory-compaction.js";
-import { discoverExternalSkills } from "./skill-radar.js";
+import { assessCapabilityTrust, discoverExternalSkills, resolveCapabilities } from "./skill-radar.js";
 import { superviseAgentPluginSession } from "./host-session-supervisor.js";
 import { AutopilotSupervisor } from "./supervisor.js";
 import { loadState } from "./state.js";
@@ -293,6 +300,9 @@ async function handleLine(line) {
           { name: "get_loop_run_events", description: "Get loop run audit events." },
           { name: "cancel_loop_run", description: "Cancel a loop run." },
           { name: "list_workflow_packs", description: "List built-in Across workflow packs for generic agent hosts." },
+          { name: "list_beginner_workflow_patterns", description: "List original Across beginner-safe, no-key workflow patterns." },
+          { name: "get_no_key_demo", description: "Return the deterministic no-key demo contract for a beginner pattern." },
+          { name: "run_no_key_demo", description: "Run a read-only beginner pattern with zero model calls and return a compact result." },
           { name: "validate_workflow_pack", description: "Validate an Across workflow pack." },
           { name: "export_workflow_pack", description: "Render host-specific exports for Codex, Claude Code, MCP, A2A, and AAA." },
           { name: "get_workflow_pack_product_card", description: "Return the user-facing product task card for a Workflow Pack." },
@@ -304,6 +314,31 @@ async function handleLine(line) {
           { name: "migrate_loop_spec", description: "Migrate and validate a LoopSpec." },
           { name: "get_loop_telemetry", description: "Get aggregate loop telemetry." },
           { name: "discover_external_skills", description: "Discover local Codex, Claude Code, and Qwen Code skills as redacted radar input." },
+          {
+            name: "assess_capability_trust",
+            description: "Statically assess a Skill directory or generic plugin manifest for deterministic trust risks without returning raw matched content.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                path: { type: "string" },
+                manifest: { type: "object" }
+              }
+            }
+          },
+          {
+            name: "resolve_capabilities",
+            description: "Automatically select healthy trusted capabilities for workflow requirements, requesting explicit decisions only when blocked or ambiguous.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                workflow_requirements: { type: "array", items: { anyOf: [{ type: "string" }, { type: "object" }] } },
+                requirements: { type: "array", items: { anyOf: [{ type: "string" }, { type: "object" }] } },
+                available_manifests: { type: "array", items: { type: "object" } },
+                manifests: { type: "array", items: { type: "object" } },
+                available_capabilities: { type: "array", items: { type: "object" } }
+              }
+            }
+          },
           { name: "compact_loop_memory", description: "Compact loop memory by evidence-graph node for just-in-time retrieval." },
           { name: "set_loop_spec_paused", description: "Pause or resume a LoopSpec." },
           { name: "set_adapter_paused", description: "Pause or resume an adapter." },
@@ -354,6 +389,17 @@ async function handleLine(line) {
       if (name === "get_loop_run_events") return respondText(id, await supervisor.events(required(args.run_id), { afterSequence: args.after_sequence }));
       if (name === "cancel_loop_run") return respondText(id, await supervisor.cancel(required(args.run_id), args.reason || "cancelled"));
       if (name === "list_workflow_packs") return respondText(id, listWorkflowPacks());
+      if (name === "list_beginner_workflow_patterns") return respondText(id, listBeginnerWorkflowPatterns());
+      if (name === "get_no_key_demo") return respondText(id, buildNoKeyDemo(args.pattern_id || args.pattern || "first-verified-task"));
+      if (name === "run_no_key_demo") {
+        const pattern = getBeginnerWorkflowPattern(args.pattern_id || args.pattern || "first-verified-task");
+        const goal = String(args.user_goal || args.goal || "").trim();
+        if (!goal) throw new Error("user_goal is required for a no-key demo run");
+        const goalDigest = createHash("sha256").update(goal).digest("hex");
+        const trigger = `beginner:${pattern.id}:goal:${goalDigest.slice(0, 16)}`;
+        const result = await supervisor.run(pattern.loop_spec_id, { trigger });
+        return respondText(id, renderNoKeyDemoResult(pattern.id, result, { goal }));
+      }
       if (name === "validate_workflow_pack") return respondText(id, validateWorkflowPack(await loadWorkflowPack(required(args.pack))));
       if (name === "export_workflow_pack") return respondText(id, renderWorkflowPackHostExports(await loadWorkflowPack(required(args.pack))));
       if (name === "get_workflow_pack_product_card") return respondText(id, renderWorkflowPackProductCard(await loadWorkflowPack(required(args.pack))));
@@ -365,6 +411,8 @@ async function handleLine(line) {
       if (name === "migrate_loop_spec") return respondText(id, (await supervisor.validateSpec(required(args.spec))).migration);
       if (name === "get_loop_telemetry") return respondText(id, await supervisor.telemetry());
       if (name === "discover_external_skills") return respondText(id, await discoverExternalSkills({ roots: args.roots || args.root }));
+      if (name === "assess_capability_trust") return respondText(id, await assessCapabilityTrust(required(args.path || args.manifest)));
+      if (name === "resolve_capabilities") return respondText(id, resolveCapabilities(args));
       if (name === "compact_loop_memory") return respondText(id, compactLoopMemoryByEvidenceGraph(args.graph || args.evidence || args));
       if (name === "set_loop_spec_paused") return respondText(id, await supervisor.setSpecPaused(required(args.spec_id), Boolean(args.paused)));
       if (name === "set_adapter_paused") return respondText(id, await supervisor.setAdapterPaused(required(args.adapter_id), Boolean(args.paused)));

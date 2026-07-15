@@ -1,6 +1,6 @@
 {
   "name": "@across/autopilot",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Controlled autonomous iteration controller for the Across ecosystem.",
   "type": "module",
   "bin": {
