@@ -137,6 +137,9 @@ never either token value):
 
 Other built-in workflows:
 
+- `scenario-simulation` for bounded multi-participant simulations dispatched as
+  a normal host task. The scenario, roles, duration, and report contract come
+  from the user's goal; they are not fixed AAA task fields or a special host UI.
 - `repo-push-gate` for a baseline-trusted local receipt or explicitly approved draft GitHub PR/CI loop.
 - `aaa-release-readiness-gate` for release evidence.
 - `github-plugin-radar` for external plugin adoption decisions.
@@ -156,9 +159,16 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.4.0`. It is source-first and GitHub-first: hosts can
-install it from the `v0.4.0` tag as a managed Across plugin, and the npm package
+The current release is `v0.5.0`. It is source-first and GitHub-first: hosts can
+install it from the `v0.5.0` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.5.0` adds goal-driven workflow resolution and a generic Worker execution
+plan. A host submits one ordinary task; Autopilot may select a compatible
+workflow, execute locally or on an approved Worker, and return the same evidence
+contract. Scenario simulation demonstrates the boundary: it is an optional
+workflow inferred from the task, not a permanent task type or a world-simulation
+screen built into the host.
 
 `v0.4.0` adds deterministic Skill and generic-plugin trust assessment. It
 separates executable behavior from documentation examples, records bounded

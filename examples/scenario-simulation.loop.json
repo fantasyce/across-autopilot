@@ -1,0 +1,62 @@
+{
+  "schema_version": "across-loop-spec/1.0",
+  "id": "scenario-simulation",
+  "name": "Scenario Simulation",
+  "description": "Run a bounded scenario on a verified remote Worker and return evidence-backed artifacts.",
+  "owner": { "type": "local_user", "id": "default" },
+  "compatibility": {
+    "min_autopilot_version": ">=0.5.0",
+    "required_orchestrator": ">=0.10.0",
+    "required_context": ">=0.11.0",
+    "required_host": ">=0.13.0"
+  },
+  "required_capabilities": [
+    "action.orchestrator_task_dispatch",
+    "action.quality_gate_evaluation",
+    "output.markdown_report",
+    "output.json_artifact",
+    "memory.pending_summary"
+  ],
+  "trigger": { "type": "manual" },
+  "scope": { "project_id": "scenario-simulation", "workspace": "." },
+  "autonomy": { "level": 2, "requires_human_approval_above": 2 },
+  "sources": [
+    { "id": "scenario-input", "type": "manual_input", "adapter": "manual_input", "title": "Scenario input", "content": "editable at task creation" }
+  ],
+  "actions": {
+    "allowed": ["orchestrator_task_dispatch", "quality_gate_evaluation", "report_generation", "write_pending_memory"],
+    "blocked": ["merge_pr", "release_publish", "sign_artifact", "write_secret"]
+  },
+  "execute": { "engine": "across-orchestrator", "mode": "task" },
+  "outputs": [
+    { "type": "markdown_report", "to": "run://scenario-simulation/report.md", "policy": "create" },
+    { "type": "json_artifact", "to": "run://scenario-simulation/evidence.json", "policy": "overwrite" },
+    { "type": "context_memory", "to": "context://pending", "policy": "append" }
+  ],
+  "gates": [
+    { "id": "worker_verified", "required": true },
+    { "id": "artifact_hashes_match", "required": true },
+    { "id": "scenario_disclaimer_present", "required": true }
+  ],
+  "memory": { "provider": "across-context", "recall": true, "remember": true, "write_status": "pending" },
+  "failure_policy": { "max_retries": 1, "retry_backoff": "exponential", "continue_on_gate_failure": false, "dead_letter": "context_memory" },
+  "sandbox": { "filesystem": "run_scoped", "network": "none", "env": "minimal" },
+  "evidence_contract": { "schema_version": "across-loop-evidence/1.0", "required_sections": ["sources", "actions", "gates", "outputs", "memory", "audit"] },
+  "used_adapters": {
+    "sources": ["manual_input"],
+    "actions": ["orchestrator_task_dispatch", "quality_gate_evaluation", "report_generation", "memory_write_candidate"],
+    "outputs": ["markdown_report", "json_artifact", "context_memory"]
+  },
+  "runtime_policy": {
+    "risk_profile": "low",
+    "network_policy": "none",
+    "filesystem_policy": "run_scoped",
+    "budget": { "max_model_calls": 0, "max_candidate_repairs": 0, "max_usd": 0 }
+  },
+  "pack_config": {
+    "workflow_runtime": "scenario-simulation/1.0",
+    "remote_worker_required": true,
+    "agent_required_on_worker": false,
+    "provider_key_allowed_on_worker": false
+  }
+}

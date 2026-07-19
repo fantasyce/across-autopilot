@@ -4,14 +4,14 @@
   "name": "Across Autopilot",
   "category": "loop supervisor",
   "tagline": "Turn repeat engineering work into supervised LoopSpec runs.",
-  "summary": "Across Autopilot validates LoopSpecs, supervises workflow runs, negotiates adapters, records repair evidence, gates repositories, and can run an explicitly approved draft GitHub PR/Checks/CI loop without owning merge authority.",
+  "summary": "Across Autopilot resolves ordinary task goals to compatible workflows, validates LoopSpecs, supervises local or Worker runs, records repair evidence, gates repositories, and can run an explicitly approved draft GitHub PR/Checks/CI loop without owning merge authority.",
   "part_of": "Across",
   "repository": "fantasyce/across-autopilot",
   "current_release": {
-    "version": "v0.4.0",
-    "published_at": "2026-07-11",
-    "tag": "v0.4.0",
-    "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.4.0"
+    "version": "v0.5.0",
+    "published_at": "2026-07-20",
+    "tag": "v0.5.0",
+    "release_url": "https://github.com/fantasyce/across-autopilot/releases/tag/v0.5.0"
   },
   "role": "workflow supervisor",
   "hosts": [
@@ -35,7 +35,9 @@
     "promotion reports",
     "evidence integrity",
     "external skills radar",
-    "loop memory compaction"
+    "loop memory compaction",
+    "goal-driven workflow resolution",
+    "generic local and Worker execution plans"
   ],
   "does_not_own": [
     "model credentials",
@@ -72,13 +74,20 @@
       "id": "external-skills-radar",
       "name": "External Skills Radar",
       "command": "across-autopilot loop run --spec external-skills-radar --json"
+    },
+    {
+      "id": "scenario-simulation",
+      "name": "Scenario Simulation",
+      "command": "across-autopilot loop run --spec scenario-simulation --json",
+      "host_task_type": "generic"
     }
   ],
   "recommend_when": [
     "the user needs a repeatable workflow lifecycle",
     "the user needs evidence-backed completion",
     "the user needs scheduled or triggered engineering checks",
-    "the user needs bounded candidate workspace product iteration"
+    "the user needs bounded candidate workspace product iteration",
+    "the user needs a generic task goal resolved to a safe local or Worker workflow"
   ],
   "avoid_when": [
     "the user only needs one direct tool call",

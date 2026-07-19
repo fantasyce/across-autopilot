@@ -23,8 +23,11 @@ import { assessCapabilityTrust, discoverExternalSkills, resolveCapabilities } fr
 import { latestCandidate, loadState, recordCandidate, saveState } from "./state.js";
 import { AutopilotSupervisor } from "./supervisor.js";
 import {
+  buildWorkflowWorkerJobPlan,
+  buildWorkflowExecutionPlan,
   listWorkflowPacks,
   loadWorkflowPack,
+  resolveWorkflowPackForGoal,
   renderWorkflowPackHostExports,
   renderWorkflowPackFrontierInterop,
   renderWorkflowPackProductCard,
@@ -375,7 +378,33 @@ async function handleAdapterCommand(args) {
 async function handleWorkflowPackCommand(args) {
   const [subcommand, ...rest] = args;
   const parsed = parseArgs(rest);
+  if (subcommand === "resolve") {
+    return printPayload(
+      resolveWorkflowPackForGoal(required(parsed.goal || parsed.positionals.join(" "), "--goal"), {
+        requestedPackId: parsed.pack || null
+      }),
+      parsed
+    );
+  }
   const pack = await loadWorkflowPack(required(parsed.pack || parsed.positionals[0], "--pack"));
+  if (subcommand === "execution-plan") {
+    const liveModel = parsed["live-model"] === undefined || String(parsed["live-model"]).toLowerCase() !== "false";
+    return printPayload(buildWorkflowExecutionPlan({
+      packId: pack.id,
+      goal: required(parsed.goal, "--goal"),
+      projectId: parsed["project-id"] || null,
+      liveModel
+    }), parsed);
+  }
+  if (subcommand === "worker-job-plan") {
+    const liveModel = parsed["live-model"] === undefined || String(parsed["live-model"]).toLowerCase() !== "false";
+    return printPayload(buildWorkflowWorkerJobPlan({
+      packId: pack.id,
+      goal: required(parsed.goal, "--goal"),
+      projectId: parsed["project-id"] || null,
+      liveModel
+    }), parsed);
+  }
   if (subcommand === "validate") return printPayload(validateWorkflowPack(pack), parsed);
   if (subcommand === "export") return printPayload(renderWorkflowPackHostExports(pack), parsed);
   if (subcommand === "product-card") return printPayload(renderWorkflowPackProductCard(pack), parsed);
@@ -537,6 +566,9 @@ Commands:
   workflow-pack protocol-readiness --pack id-or-path --json
   workflow-pack trust-receipt --pack id-or-path --json
   workflow-pack frontier-interop --pack id-or-path --json
+  workflow-pack resolve --goal text [--pack id] --json
+  workflow-pack execution-plan --pack id --goal text [--project-id id] [--live-model false] --json
+  workflow-pack worker-job-plan --pack id --goal text [--project-id id] [--live-model false] --json
   adapter pause --adapter-id id --json
   adapter resume --adapter-id id --json
   status --json

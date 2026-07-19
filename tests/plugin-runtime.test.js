@@ -238,7 +238,7 @@ test("cli loop validation exposes built-in LoopSpec", async () => {
     "--json"
   ], { env })).stdout);
   const builtInIds = registry.built_in.map((spec) => spec.id);
-  assert.deepEqual(builtInIds.sort(), ["aaa-autonomous-self-iteration", "aaa-platform-self-repair", "aaa-release-readiness-gate", "aaa-research-driven-self-iteration", "aaa-self-iteration-product", "beginner-release-readiness", "daily-news-brief", "external-skills-radar", "github-plugin-radar", "plugin-compatibility-lab-v2", "repo-push-gate", "repo-quality-copilot"]);
+  assert.deepEqual(builtInIds.sort(), ["aaa-autonomous-self-iteration", "aaa-platform-self-repair", "aaa-release-readiness-gate", "aaa-research-driven-self-iteration", "aaa-self-iteration-product", "beginner-release-readiness", "daily-news-brief", "external-skills-radar", "github-plugin-radar", "plugin-compatibility-lab-v2", "repo-push-gate", "repo-quality-copilot", "scenario-simulation"]);
   assert.equal(registry.built_in.find((spec) => spec.id === "github-plugin-radar").title, "GitHub Plugin Radar");
   assert.equal(registry.built_in.find((spec) => spec.id === "repo-quality-copilot").title, "Repository Quality Copilot");
   assert.equal(registry.built_in.find((spec) => spec.id === "plugin-compatibility-lab-v2").title, "Plugin Compatibility Lab v2");
@@ -319,6 +319,34 @@ test("cli exports workflow packs for generic agent hosts", async () => {
   const frontierInterop = JSON.parse((await exec("node", [cli, "workflow-pack", "frontier-interop", "--pack", "plugin-compatibility-lab-v2", "--json"])).stdout);
   assert.equal(frontierInterop.schema_version, "across-workflow-pack-frontier-interop/1.0");
   assert.equal(frontierInterop.observability.raw_transcripts_included, false);
+
+  for (const packId of [
+    "repo-push-gate",
+    "repo-quality-copilot",
+    "release-captain",
+    "plugin-compatibility-lab-v2",
+    "autonomous-product-iteration"
+  ]) {
+    const plan = JSON.parse((await exec("node", [
+      cli,
+      "workflow-pack",
+      "execution-plan",
+      "--pack",
+      packId,
+      "--goal",
+      `Run ${packId} for this repository`,
+      "--project-id",
+      "project-local-plan",
+      "--json"
+    ])).stdout);
+    assert.equal(plan.schema_version, "across-workflow-execution-plan/1.0");
+    assert.equal(plan.workflow_id, packId);
+    assert.equal(plan.execution_contract.route, "local");
+    assert.equal(plan.adapter.type, "autopilot-workflow");
+    assert.equal(plan.subtasks.length, 1);
+    assert.ok(plan.deliverables[0].endsWith(".md"));
+    assert.ok(plan.deliverables.every((path) => path.startsWith(`across-results/${packId}/`)));
+  }
 });
 
 test("cli async loop task uses run-store as source of truth", async () => {

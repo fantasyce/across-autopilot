@@ -19,7 +19,8 @@ export const BUILT_IN_SPEC_PATHS = Object.freeze({
   "repo-quality-copilot": join(PACKAGE_ROOT, "examples", "repo-quality-copilot.loop.json"),
   "repo-push-gate": join(PACKAGE_ROOT, "examples", "repo-push-gate.loop.json"),
   "github-plugin-radar": join(PACKAGE_ROOT, "examples", "github-plugin-radar.loop.json"),
-  "daily-news-brief": join(PACKAGE_ROOT, "examples", "daily-news-brief.loop.json")
+  "daily-news-brief": join(PACKAGE_ROOT, "examples", "daily-news-brief.loop.json"),
+  "scenario-simulation": join(PACKAGE_ROOT, "examples", "scenario-simulation.loop.json")
 });
 
 const VALID_TRIGGERS = new Set(["manual", "cron", "webhook", "orchestrator_event", "memory_pending", "file_change", "daemon"]);
