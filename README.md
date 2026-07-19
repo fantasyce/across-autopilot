@@ -170,6 +170,11 @@ contract. Scenario simulation demonstrates the boundary: it is an optional
 workflow inferred from the task, not a permanent task type or a world-simulation
 screen built into the host.
 
+The GitHub tag workflow attaches a deterministic, checksummed Scenario
+Simulation Worker pack. Hosts verify its SHA-256 before installation; the pack
+contains no provider credentials and calls only the task-bound model gateway
+when live model annotation is explicitly enabled.
+
 `v0.4.0` adds deterministic Skill and generic-plugin trust assessment. It
 separates executable behavior from documentation examples, records bounded
 content hashes without raw secrets, and resolves a unique safe healthy

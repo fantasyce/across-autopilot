@@ -1,0 +1,67 @@
+name: Worker Pack Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the v prefix
+        required: true
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  scenario-worker-pack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Resolve and verify version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ inputs.version }}"
+          if [[ -z "$version" ]]; then version="${GITHUB_REF_NAME#v}"; fi
+          project_version="$(node -p 'require("./package.json").version')"
+          test "$version" = "$project_version"
+          git fetch --quiet origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Build deterministic pack
+        env:
+          SOURCE_DATE_EPOCH: ${{ github.event.repository.pushed_at }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" \
+            SCENARIO_WORKER_PACK_VERSION="${{ steps.version.outputs.version }}" \
+            bash scripts/build_scenario_worker_pack.sh \
+              dist/across-scenario-simulation-worker-pack-${{ steps.version.outputs.version }}.tar.gz
+          (cd dist && sha256sum *.tar.gz > SHA256SUMS)
+      - name: Attest pack
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/*
+      - uses: actions/upload-artifact@v7
+        with:
+          name: scenario-simulation-worker-pack
+          path: dist/*
+          if-no-files-found: error
+      - name: Attach pack to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
