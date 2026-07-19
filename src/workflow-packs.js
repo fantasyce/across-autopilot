@@ -1,12 +1,15 @@
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { normalizeRuntimePolicy, PACKAGE_ROOT } from "./loop-spec.js";
+import { buildScenarioJobManifest, planScenarioInputFromGoal } from "./scenario-simulation.js";
 
 export const WORKFLOW_PACK_SCHEMA = "across-workflow-pack/1.0";
 export const WORKFLOW_PACK_PRODUCT_CARD_SCHEMA = "across-workflow-pack-product-card/1.0";
 export const WORKFLOW_PACK_TRUST_RECEIPT_SCHEMA = "across-agent-team-trust-receipt/1.0";
 export const WORKFLOW_PACK_PROTOCOL_READINESS_SCHEMA = "across-workflow-pack-protocol-readiness/1.0";
 export const WORKFLOW_PACK_FRONTIER_INTEROP_SCHEMA = "across-workflow-pack-frontier-interop/1.0";
+export const WORKFLOW_EXECUTION_PLAN_SCHEMA = "across-workflow-execution-plan/1.0";
 
 const HOST_TARGETS = Object.freeze(["codex", "claude_code", "mcp", "a2a", "across"]);
 
@@ -33,6 +36,17 @@ const FALLBACK_CAPABILITIES = Object.freeze([
 ]);
 
 const MARKET_PROFILES = Object.freeze({
+  "scenario-simulation": {
+    primary_user: "people exploring bounded outcomes before making a real-world decision",
+    user_problem: "I want to examine how a situation may unfold without learning a simulation tool first.",
+    job_to_be_done: "Turn a natural-language situation into a bounded multi-subject simulation with uncertainty and evidence.",
+    headline: "Explore a bounded situation from multiple perspectives without treating it as a prediction.",
+    why_now: "Complex agent tasks should be selected from user intent instead of exposed as product-specific forms.",
+    competitive_position: "Across keeps the simulation as an optional workflow pack behind the normal task surface.",
+    time_to_value: "under 5 minutes",
+    no_model_required: false,
+    trust_receipt_title: "Scenario Simulation Trust Receipt"
+  },
   "repo-quality-copilot": {
     primary_user: "maintainers preparing a release or reviewing dependency drift",
     user_problem: "I need a useful repo health report without pasting the same checklist into every coding agent.",
@@ -91,6 +105,56 @@ const MARKET_PROFILES = Object.freeze({
 });
 
 export const BUILT_IN_WORKFLOW_PACKS = Object.freeze({
+  "scenario-simulation": {
+    schema_version: WORKFLOW_PACK_SCHEMA,
+    id: "scenario-simulation",
+    title: "Scenario Simulation",
+    description: "Bounded deterministic or host-model-assisted simulation executed by a verified remote Worker.",
+    user_summary: "Across will explore how the situation may develop, compare the participants' responses, and mark uncertainty before returning a reviewable report.",
+    loop_spec_id: "scenario-simulation",
+    cli_command: "across-autopilot loop run --spec scenario-simulation --json",
+    autonomy_level: 2,
+    intent: {
+      phrases: [
+        "scenario simulation",
+        "world simulation",
+        "simulate how",
+        "simulate what happens",
+        "场景模拟",
+        "情景模拟",
+        "世界模拟",
+        "行为模拟",
+        "情境推演",
+        "场景推演",
+        "模拟推演"
+      ],
+      keywords: ["推演", "多主体", "参与者互动", "角色互动", "可能如何发展"],
+      minimum_score: 4
+    },
+    execution: {
+      route: "worker",
+      phases: ["local-plan", "remote-run", "local-verify"],
+      worker_job_planner: "scenario-simulation"
+    },
+    host_targets: HOST_TARGETS,
+    required_capabilities: [
+      "action.orchestrator_task_dispatch",
+      "action.quality_gate_evaluation",
+      "output.markdown_report",
+      "output.json_artifact",
+      "memory.pending_summary"
+    ],
+    runtime_policy: readOnlyPolicy("low"),
+    boundaries: boundary("remote_worker_run_scoped_only"),
+    artifacts: [
+      "run://scenario-simulation/job-manifest.json",
+      "run://scenario-simulation/result.json",
+      "run://scenario-simulation/report.md",
+      "run://scenario-simulation/evidence.json",
+      "run://scenario-simulation/artifact-manifest.json",
+      "run://scenario-simulation/model-usage.json"
+    ]
+  },
   "repo-push-gate": {
     schema_version: WORKFLOW_PACK_SCHEMA,
     id: "repo-push-gate",
@@ -99,6 +163,12 @@ export const BUILT_IN_WORKFLOW_PACKS = Object.freeze({
     loop_spec_id: "repo-push-gate",
     cli_command: "across-autopilot gate --repo . --base-ref origin/main --head-ref HEAD --json",
     autonomy_level: 4,
+    intent: {
+      phrases: ["repo push gate", "repository push gate", "push readiness", "推送检查", "提交前检查"],
+      keywords: ["push", "feature branch", "draft pr", "推送", "分支"],
+      minimum_score: 4
+    },
+    execution: { route: "local", phases: ["local-run"] },
     host_targets: HOST_TARGETS,
     required_capabilities: [
       "source.directory",
@@ -119,6 +189,22 @@ export const BUILT_IN_WORKFLOW_PACKS = Object.freeze({
     description: "Read-only repository quality inspection for release readiness.",
     loop_spec_id: "repo-quality-copilot",
     autonomy_level: 2,
+    intent: {
+      phrases: [
+        "repository quality",
+        "repo quality",
+        "codebase quality",
+        "review a repository",
+        "check code quality",
+        "检查代码仓库",
+        "检查代码质量",
+        "仓库质量",
+        "代码质量检查"
+      ],
+      keywords: ["repository", "repo", "code quality", "代码仓库", "代码质量", "依赖风险", "license"],
+      minimum_score: 4
+    },
+    execution: { route: "local", phases: ["local-run"] },
     host_targets: HOST_TARGETS,
     required_capabilities: [
       "source.directory",
@@ -140,6 +226,12 @@ export const BUILT_IN_WORKFLOW_PACKS = Object.freeze({
     description: "Release-readiness gate that produces review evidence without publishing.",
     loop_spec_id: "aaa-release-readiness-gate",
     autonomy_level: 2,
+    intent: {
+      phrases: ["release readiness", "release captain", "发布准备", "发版检查", "检查发布"],
+      keywords: ["release", "发版", "发布", "changelog", "版本"],
+      minimum_score: 4
+    },
+    execution: { route: "local", phases: ["local-run"] },
     host_targets: HOST_TARGETS,
     required_capabilities: [
       "source.directory",
@@ -160,6 +252,12 @@ export const BUILT_IN_WORKFLOW_PACKS = Object.freeze({
     description: "Host-neutral plugin compatibility assessment for Codex, Claude Code, MCP, A2A, and AAA.",
     loop_spec_id: "plugin-compatibility-lab-v2",
     autonomy_level: 2,
+    intent: {
+      phrases: ["plugin compatibility", "evaluate plugin", "check plugin", "插件兼容", "评估插件", "检查插件"],
+      keywords: ["plugin", "mcp server", "插件", "manifest", "兼容性"],
+      minimum_score: 4
+    },
+    execution: { route: "local", phases: ["local-run"] },
     host_targets: HOST_TARGETS,
     required_capabilities: [
       "source.directory",
@@ -192,6 +290,12 @@ export const BUILT_IN_WORKFLOW_PACKS = Object.freeze({
     description: "Candidate-workspace product iteration with independent review evidence.",
     loop_spec_id: "aaa-autonomous-self-iteration",
     autonomy_level: 3,
+    intent: {
+      phrases: ["autonomous product iteration", "self iteration", "自主迭代", "自动迭代产品", "候选工作区迭代"],
+      keywords: ["candidate workspace", "self iteration", "候选工作区", "自主迭代"],
+      minimum_score: 4
+    },
+    execution: { route: "local", phases: ["local-run", "human-review"] },
     host_targets: HOST_TARGETS,
     required_capabilities: [
       "source.directory",
@@ -215,6 +319,127 @@ export const BUILT_IN_WORKFLOW_PACKS = Object.freeze({
 export async function loadWorkflowPack(idOrPath) {
   if (BUILT_IN_WORKFLOW_PACKS[idOrPath]) return clone(BUILT_IN_WORKFLOW_PACKS[idOrPath]);
   return JSON.parse(await readFile(resolve(idOrPath), "utf8"));
+}
+
+export function resolveWorkflowPackForGoal(goal, { requestedPackId = null } = {}) {
+  const cleanGoal = String(goal || "").trim();
+  if (!cleanGoal) throw new Error("workflow resolution requires a user goal");
+  if (requestedPackId) {
+    const requested = BUILT_IN_WORKFLOW_PACKS[String(requestedPackId)];
+    if (!requested) throw new Error(`Unknown workflow pack: ${requestedPackId}`);
+    return workflowResolution(cleanGoal, requested, { score: 100, matches: ["explicit-request"], explicit: true });
+  }
+  const candidates = Object.values(BUILT_IN_WORKFLOW_PACKS)
+    .map((pack) => ({ pack, ...scoreWorkflowIntent(cleanGoal, pack.intent) }))
+    .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => right.score - left.score || left.pack.id.localeCompare(right.pack.id));
+  const winner = candidates[0];
+  const minimum = Number(winner?.pack?.intent?.minimum_score ?? 4);
+  const ambiguous = Boolean(winner && candidates[1] && winner.score - candidates[1].score < 2);
+  if (!winner || winner.score < minimum || ambiguous) {
+    return {
+      schema_version: "across-workflow-resolution/1.0",
+      goal: cleanGoal,
+      selected_workflow: null,
+      automatic: true,
+      reason: ambiguous ? "No workflow pack has a clear intent lead." : "No workflow pack is needed for this task.",
+      candidates: candidates.slice(0, 3).map(publicCandidate)
+    };
+  }
+  return workflowResolution(cleanGoal, winner.pack, winner);
+}
+
+export function buildWorkflowWorkerJobPlan({ packId, goal, projectId = null, liveModel = true } = {}) {
+  const pack = BUILT_IN_WORKFLOW_PACKS[String(packId || "")];
+  if (!pack) throw new Error(`Unknown workflow pack: ${packId}`);
+  const execution = pack.execution || {};
+  if (execution.route !== "worker") throw new Error(`Workflow pack ${pack.id} does not use a remote Worker`);
+  const planner = WORKER_JOB_PLANNERS[execution.worker_job_planner];
+  if (!planner) throw new Error(`Workflow pack ${pack.id} has no Worker Job planner`);
+  const planned = planner({ goal, projectId: projectId || `project-${randomUUID()}`, liveModel });
+  return {
+    schema_version: "across-workflow-worker-job-plan/1.0",
+    workflow_id: pack.id,
+    workflow_title: pack.title,
+    execution_contract: {
+      route: "worker",
+      phases: asArray(execution.phases),
+      generated_by: "across-autopilot"
+    },
+    manifest: planned.manifest,
+    inputs: planned.inputs,
+    expected_outputs: asArray(planned.manifest.expected_outputs),
+    user_summary: userWorkflowSummary(pack)
+  };
+}
+
+export function buildWorkflowExecutionPlan({ packId, goal, projectId = null, liveModel = true } = {}) {
+  const pack = BUILT_IN_WORKFLOW_PACKS[String(packId || "")];
+  if (!pack) throw new Error(`Unknown workflow pack: ${packId}`);
+  const cleanGoal = String(goal || "").trim();
+  if (!cleanGoal) throw new Error("workflow execution planning requires a user goal");
+  const execution = pack.execution || { route: "local", phases: ["local-run"] };
+  const route = execution.route === "worker" ? "worker" : "local";
+  const base = {
+    schema_version: WORKFLOW_EXECUTION_PLAN_SCHEMA,
+    workflow_id: pack.id,
+    workflow_title: pack.title,
+    goal: cleanGoal,
+    project_id: projectId || `project-${randomUUID()}`,
+    execution_contract: {
+      route,
+      phases: asArray(execution.phases),
+      generated_by: "across-autopilot"
+    },
+    user_summary: userWorkflowSummary(pack)
+  };
+  if (route === "worker") {
+    const workerJobPlan = buildWorkflowWorkerJobPlan({
+      packId: pack.id,
+      goal: cleanGoal,
+      projectId: base.project_id,
+      liveModel
+    });
+    const expectedOutputs = asArray(workerJobPlan.expected_outputs).map(String).filter(Boolean);
+    return {
+      ...base,
+      expected_outputs: expectedOutputs,
+      deliverables: expectedOutputs,
+      subtasks: [{
+        id: "worker-execution",
+        description: "Execute the selected workflow on an approved Worker and return verified evidence.",
+        path: expectedOutputs[0],
+        agent: "across-worker",
+        wave: 1,
+        priority: 1,
+        dependencies: []
+      }],
+      adapter: { type: "worker" },
+      worker_job_plan: workerJobPlan
+    };
+  }
+
+  const deliverables = localWorkflowDeliverables(pack);
+  return {
+    ...base,
+    expected_outputs: deliverables,
+    deliverables,
+    subtasks: [{
+      id: "workflow-pack-execution",
+      description: `Run the ${pack.title} Workflow Pack for the exact user goal. Use LoopSpec ${pack.loop_spec_id}, preserve bounded runtime and human-review gates, and produce the declared report and evidence bundle.`,
+      path: deliverables[0],
+      agent: "across-autopilot",
+      wave: 1,
+      priority: 1,
+      dependencies: []
+    }],
+    adapter: {
+      type: "autopilot-workflow",
+      workflow_id: pack.id,
+      loop_spec_id: pack.loop_spec_id
+    },
+    worker_job_plan: null
+  };
 }
 
 export function listWorkflowPacks({ registry = null } = {}) {
@@ -566,6 +791,98 @@ function marketProfile(pack) {
     no_model_required: false,
     trust_receipt_title: "Agent Team Trust Receipt"
   };
+}
+
+const WORKER_JOB_PLANNERS = Object.freeze({
+  "scenario-simulation": ({ goal, projectId, liveModel }) => {
+    const input = planScenarioInputFromGoal(goal, { liveModel });
+    const runId = `run-${randomUUID().replaceAll("-", "")}`;
+    const jobId = `job-${randomUUID().replaceAll("-", "")}`;
+    const planned = buildScenarioJobManifest({ runId, jobId, projectId, input });
+    return { manifest: planned.manifest, inputs: { "input.json": planned.input } };
+  }
+});
+
+function localWorkflowDeliverables(pack) {
+  const base = `across-results/${pack.id}`;
+  const names = [];
+  for (const artifact of asArray(pack.artifacts)) {
+    const value = String(artifact || "").trim();
+    if (!value) continue;
+    let name;
+    if (value.startsWith("context://")) {
+      name = "pending-memory.json";
+    } else {
+      name = value.split("/").filter(Boolean).at(-1) || "evidence.json";
+      if (!name.includes(".")) name = `${name}.json`;
+    }
+    const path = `${base}/${name}`;
+    if (!names.includes(path)) names.push(path);
+  }
+  if (!names.some((item) => item.endsWith(".md"))) names.unshift(`${base}/report.md`);
+  names.sort((left, right) => Number(!left.endsWith(".md")) - Number(!right.endsWith(".md")) || left.localeCompare(right));
+  return names.length ? names : [`${base}/report.md`, `${base}/evidence.json`];
+}
+
+function scoreWorkflowIntent(goal, intent = {}) {
+  const normalizedGoal = normalizeIntentText(goal);
+  const matches = [];
+  let score = 0;
+  for (const phrase of asArray(intent.phrases)) {
+    const normalized = normalizeIntentText(phrase);
+    if (normalized && normalizedGoal.includes(normalized)) {
+      score += 4;
+      matches.push(String(phrase));
+    }
+  }
+  for (const keyword of asArray(intent.keywords)) {
+    const normalized = normalizeIntentText(keyword);
+    if (normalized && normalizedGoal.includes(normalized)) {
+      score += 1;
+      matches.push(String(keyword));
+    }
+  }
+  return { score, matches: [...new Set(matches)] };
+}
+
+function workflowResolution(goal, pack, scored) {
+  return {
+    schema_version: "across-workflow-resolution/1.0",
+    goal,
+    selected_workflow: {
+      id: pack.id,
+      title: pack.title,
+      description: pack.description,
+      confidence: scored.explicit ? 1 : Math.min(0.99, 0.45 + scored.score * 0.08),
+      reason: scored.explicit ? "The workflow was explicitly requested." : `Matched the task intent: ${scored.matches.join(", ")}.`,
+      user_summary: userWorkflowSummary(pack),
+      execution: clone(pack.execution || { route: "local", phases: ["local-run"] })
+    },
+    automatic: true,
+    reason: "Across Autopilot selected the best available workflow pack from the task goal.",
+    candidates: [publicCandidate({ pack, ...scored })]
+  };
+}
+
+function publicCandidate(candidate) {
+  return {
+    workflow_id: candidate.pack.id,
+    title: candidate.pack.title,
+    score: candidate.score,
+    matched_terms: asArray(candidate.matches)
+  };
+}
+
+function userWorkflowSummary(pack) {
+  return pack.user_summary || pack.description || pack.title;
+}
+
+function normalizeIntentText(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .toLocaleLowerCase("en-US")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function artifactPurpose(ref) {
