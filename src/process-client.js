@@ -241,6 +241,13 @@ export function sanitizedSubprocessEnv(source = process.env) {
   delete env.__PYVENV_LAUNCHER__;
   delete env.VIRTUAL_ENV;
   for (const key of ["DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH", "LD_LIBRARY_PATH"]) delete env[key];
+  // Autopilot commands are independent tools, not worker children of the
+  // PyInstaller-frozen AAA backend. PyInstaller 6.9+ otherwise reuses the
+  // parent's private extraction state and a nested onefile tool can fail
+  // before Python starts (for example, "Could not create temporary
+  // directory"). Force an independent bootloader environment after removing
+  // every inherited private value above.
+  env.PYINSTALLER_RESET_ENVIRONMENT = "1";
   if (source.ACROSS_AAA_HOST_PYTHONPATH) {
     env.PYTHONPATH = source.ACROSS_AAA_HOST_PYTHONPATH;
   }

@@ -159,11 +159,15 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.5.0`. It is source-first and GitHub-first: hosts can
-install it from the `v0.5.0` tag as a managed Across plugin, and the npm package
+The current release is `v0.5.1`. It is source-first and GitHub-first: hosts can
+install it from the `v0.5.1` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
 
-`v0.5.0` adds goal-driven workflow resolution and a generic Worker execution
+`v0.5.1` keeps the goal-driven workflow resolution and generic Worker execution
+introduced in `v0.5.0`, and hardens commands launched from a packaged AAA host
+so independent PyInstaller runtimes start with clean extraction state.
+
+`v0.5.0` added goal-driven workflow resolution and a generic Worker execution
 plan. A host submits one ordinary task; Autopilot may select a compatible
 workflow, execute locally or on an approved Worker, and return the same evidence
 contract. Scenario simulation demonstrates the boundary: it is an optional
