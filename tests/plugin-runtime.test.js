@@ -462,7 +462,7 @@ test("subprocess environment strips packaged host Python contamination", () => {
   assert.equal(env.OPENAI_API_KEY, undefined);
   assert.equal(env.PATH, "/usr/bin");
   assert.equal(env._PYI_ARCHIVE_FILE, undefined);
-  assert.equal(env.PYINSTALLER_RESET_ENVIRONMENT, undefined);
+  assert.equal(env.PYINSTALLER_RESET_ENVIRONMENT, "1");
   assert.equal(env.PYTHONHOME, undefined);
   assert.equal(env.PYTHONPATH, "/tmp/aaa-host-src");
   assert.equal(env.PYTHONUNBUFFERED, undefined);
