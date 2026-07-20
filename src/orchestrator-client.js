@@ -1,11 +1,15 @@
 import { FAILURE_CODES, LoopFailure } from "./failures.js";
 import { resolveCommand, runJsonCommand } from "./process-client.js";
+import { existsSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 
 export class OrchestratorClient {
   constructor(options = {}) {
     this.env = options.env || process.env;
     this.command = resolveCommand(options.command || this.env.ACROSS_ORCHESTRATOR_COMMAND, ["across-orchestrator"], this.env);
     this.cwd = options.cwd || process.cwd();
+    this.hostRequest = options.hostRequest || hostJsonRequest;
+    this.hostSocketExists = options.hostSocketExists || existsSync;
   }
 
   async capabilities() {
@@ -38,6 +42,17 @@ export class OrchestratorClient {
     };
     try {
       const runTimeoutMs = orchestratorRunTimeoutMs(modelPolicy);
+      const hostSocket = hostSocketPath(this.env);
+      if (hostSocket && this.hostSocketExists(hostSocket)) {
+        return await runLoopTaskViaHost({
+          socketPath: hostSocket,
+          spec,
+          run,
+          metadata,
+          timeoutMs: runTimeoutMs,
+          requestJson: this.hostRequest
+        });
+      }
       const started = await runJsonCommand(this.command, [
         "loop-start",
         spec.description || spec.name,
@@ -85,12 +100,108 @@ export class OrchestratorClient {
   }
 }
 
+async function runLoopTaskViaHost({ socketPath, spec, run, metadata, timeoutMs, requestJson }) {
+  const started = await requestJson(socketPath, "POST", "/api/orchestrator/loops", {
+    goal: spec.description || spec.name,
+    project_dir: run.sandbox,
+    agent: "autopilot",
+    max_turns: spec.execute?.max_turns || 8,
+    metadata
+  }, timeoutMs);
+  const loopId = started.loop_id;
+  if (!loopId) throw new Error("AAA Orchestrator host did not return a loop id");
+  const encodedLoopId = encodeURIComponent(loopId);
+  const completed = await requestJson(socketPath, "POST", `/api/orchestrator/loops/${encodedLoopId}/run`, {}, timeoutMs);
+  const status = await requestJson(socketPath, "GET", `/api/orchestrator/loops/${encodedLoopId}`, null, timeoutMs);
+  const summary = await requestJson(socketPath, "GET", `/api/orchestrator/loops/${encodedLoopId}/evidence-summary`, null, timeoutMs);
+  const events = await requestJson(socketPath, "GET", `/api/orchestrator/loops/${encodedLoopId}/events`, null, timeoutMs);
+  const modelDecision = extractModelDecision(completed, status, summary);
+  return {
+    task_id: loopId,
+    loop_id: loopId,
+    status: completed.status || status.status || "completed",
+    quality_status: summary.quality_status || summary.status || "passed",
+    metadata_reflected: Boolean(status.metadata?.autopilot?.run_id === run.run_id || completed.metadata?.autopilot?.run_id === run.run_id),
+    model_backed: Boolean(modelDecision),
+    model_decision: modelDecision,
+    status_payload: status,
+    evidence_summary: summary,
+    event_count: Array.isArray(events) ? events.length : 0,
+    evidence_refs: [`orchestrator/${loopId}/evidence-summary`]
+  };
+}
+
+function hostSocketPath(env) {
+  const explicit = String(env.ACROSS_AAA_HOST_SOCKET || "").trim();
+  if (explicit) return explicit;
+  try {
+    const lease = JSON.parse(String(env.ACROSS_AAA_CANDIDATE_MODEL_LEASE_JSON || "{}"));
+    return String(lease.host_socket || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function hostJsonRequest(socketPath, method, path, payload, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const body = payload === null ? "" : JSON.stringify(payload);
+    const request = httpRequest({
+      socketPath,
+      path,
+      method,
+      headers: body ? {
+        "content-type": "application/json",
+        "content-length": Buffer.byteLength(body)
+      } : {}
+    }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8");
+        let decoded = {};
+        try {
+          decoded = text ? JSON.parse(text) : {};
+        } catch {
+          reject(new Error(`AAA Orchestrator host returned invalid JSON (${response.statusCode})`));
+          return;
+        }
+        if ((response.statusCode || 500) >= 400) {
+          reject(new Error(`AAA Orchestrator host failed (${response.statusCode}): ${decoded.detail || decoded.error || "unknown error"}`));
+          return;
+        }
+        resolve(decoded);
+      });
+    });
+    request.setTimeout(timeoutMs, () => request.destroy(new Error(`AAA Orchestrator host timed out after ${timeoutMs}ms`)));
+    request.on("error", reject);
+    if (body) request.write(body);
+    request.end();
+  });
+}
+
 function modelPolicyFor(spec, env) {
   const declared = { ...(spec.model_policy || {}), ...(spec.pack_config?.model_policy || {}) };
-  if (!declared.host_model_command && !declared.hostModelCommand && env.ACROSS_AAA_HOST_MODEL_COMMAND) {
+  const modelRequested = Object.keys(declared).length > 0;
+  const hostSocket = hostSocketPath(env);
+  if (modelRequested && hostSocket && existsSync(hostSocket)) {
+    declared.host_model_command = [
+      "/usr/bin/curl",
+      "--silent",
+      "--show-error",
+      "--fail-with-body",
+      "--unix-socket",
+      hostSocket,
+      "--header",
+      "content-type: application/json",
+      "--data-binary",
+      "@-",
+      "http://localhost/api/autopilot/model-decision"
+    ];
+    delete declared.hostModelCommand;
+  } else if (modelRequested && !declared.host_model_command && !declared.hostModelCommand && env.ACROSS_AAA_HOST_MODEL_COMMAND) {
     declared.host_model_command = env.ACROSS_AAA_HOST_MODEL_COMMAND;
   }
-  if (!declared.provider && !declared.provider_id && env.ACROSS_AAA_HOST_MODEL_PROVIDER) {
+  if (modelRequested && !declared.provider && !declared.provider_id && env.ACROSS_AAA_HOST_MODEL_PROVIDER) {
     declared.provider = env.ACROSS_AAA_HOST_MODEL_PROVIDER;
   }
   return declared;

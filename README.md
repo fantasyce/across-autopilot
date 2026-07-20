@@ -159,9 +159,15 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.5.1`. It is source-first and GitHub-first: hosts can
-install it from the `v0.5.1` tag as a managed Across plugin, and the npm package
+The current release is `v0.5.2`. It is source-first and GitHub-first: hosts can
+install it from the `v0.5.2` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.5.2` brokers Orchestrator loops through AAA's private local host socket when
+the plugin runs inside the packaged macOS app. Standalone hosts retain the CLI
+fallback. This avoids nested packaged-process startup, keeps credentials and
+runtime ownership with the host, and records Orchestrator task and Context
+memory identifiers directly in each completed run.
 
 `v0.5.1` keeps the goal-driven workflow resolution and generic Worker execution
 introduced in `v0.5.0`, and hardens commands launched from a packaged AAA host

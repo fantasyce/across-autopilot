@@ -162,7 +162,13 @@ export class AutopilotSupervisor {
       const memoryActions = actions.filter((action) => action.adapter === "memory_write_candidate");
       memory.written = memoryActions.map((action) => action.result?.memory || action.result).filter(Boolean);
       await this.assertRunNotCancelled(run);
-      run = await this.store.updateRun(run.run_id, { status: "completed", state: "completed", completed_at: new Date().toISOString() });
+      run = await this.store.updateRun(run.run_id, {
+        status: "completed",
+        state: "completed",
+        completed_at: new Date().toISOString(),
+        orchestrator_tasks: collectOrchestratorTaskIds(actions),
+        memory_ids: collectMemoryIds(actions, memory)
+      });
       await this.store.audit(run.run_id, spec.id, "run_completed", "Run completed.", { outputs: outputs.length });
     } catch (error) {
       if (Array.isArray(error?.partialActions) && !actions.length) actions = error.partialActions;
@@ -898,6 +904,28 @@ export class AutopilotSupervisor {
     }
     return outputs;
   }
+}
+
+function collectOrchestratorTaskIds(actions) {
+  return [...new Set(actions
+    .filter((action) => action.adapter === "orchestrator_task_dispatch")
+    .flatMap((action) => [action.result?.task?.task_id, action.result?.task?.loop_id])
+    .filter(Boolean)
+    .map(String))];
+}
+
+function collectMemoryIds(actions, memory) {
+  const ids = new Set();
+  const visit = (value) => {
+    if (!value || typeof value !== "object") return;
+    if (typeof value.memory_id === "string" && value.memory_id) ids.add(value.memory_id);
+    if (typeof value.id === "string" && /^mem(?:_|-)/.test(value.id)) ids.add(value.id);
+    if (Array.isArray(value)) value.forEach(visit);
+    else Object.values(value).forEach(visit);
+  };
+  visit(memory?.written || []);
+  for (const action of actions) visit(action.result);
+  return [...ids];
 }
 
 function applyRuntimeModelOverrides(spec, overrides) {
