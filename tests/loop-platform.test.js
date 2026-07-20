@@ -2337,6 +2337,8 @@ test("supervisor runs a built-in pack through adapters and evidence envelope", a
   const { run, evidence } = await supervisor.run("daily-news-brief");
 
   assert.equal(run.status, "completed");
+  assert.deepEqual(run.orchestrator_tasks, ["task-daily-news-brief", "loop-daily-news-brief"]);
+  assert.deepEqual(run.memory_ids, ["mem-new"]);
   assert.equal(evidence.schema_version, "across-loop-evidence/1.0");
   assert.equal(evidence.orchestrator.tasks.length, 1);
   assert.equal(evidence.orchestrator.tasks[0].metadata_reflected, true);

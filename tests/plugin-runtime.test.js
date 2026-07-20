@@ -6,10 +6,63 @@ import { promisify } from "node:util";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resolveCommand, runJsonCommand, sanitizedSubprocessEnv } from "../src/process-client.js";
+import { OrchestratorClient } from "../src/orchestrator-client.js";
 import { AUTOPILOT_VERSION } from "../src/version.js";
 
 const exec = promisify(execFile);
 const cli = join(process.cwd(), "src", "cli.js");
+
+test("OrchestratorClient uses the AAA private host socket when available", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-host-socket-"));
+  const socketPath = join(home, "aaa.sock");
+  const requests = [];
+  const hostRequest = async (_socketPath, method, path) => {
+    requests.push(`${method} ${path}`);
+    if (method === "POST" && path === "/api/orchestrator/loops") {
+      return { loop_id: "loop-host-1", status: "pending" };
+    }
+    if (method === "POST" && path === "/api/orchestrator/loops/loop-host-1/run") {
+      return { loop_id: "loop-host-1", status: "completed", metadata: { autopilot: { run_id: "run-host-1" } } };
+    }
+    if (path === "/api/orchestrator/loops/loop-host-1/evidence-summary") {
+      return { status: "passed", quality_status: "passed" };
+    }
+    if (path === "/api/orchestrator/loops/loop-host-1/events") return [{ sequence: 1 }];
+    return { loop_id: "loop-host-1", status: "completed", metadata: { autopilot: { run_id: "run-host-1" } } };
+  };
+
+  const client = new OrchestratorClient({
+    command: [join(home, "must-not-run")],
+    env: {
+      ACROSS_AAA_CANDIDATE_MODEL_LEASE_JSON: JSON.stringify({ host_socket: socketPath })
+    },
+    hostRequest,
+    hostSocketExists: () => true
+  });
+  const result = await client.runLoopTask({
+    spec: {
+      id: "host-socket-check",
+      name: "Host socket check",
+      description: "Verify host-brokered orchestration.",
+      schema_version: "across-loop-spec/1.0",
+      execute: { max_turns: 2 },
+      evidence_contract: { schema_version: "across-evidence/1.0" }
+    },
+    run: { run_id: "run-host-1", sandbox: home }
+  });
+
+  assert.equal(result.loop_id, "loop-host-1");
+  assert.equal(result.quality_status, "passed");
+  assert.equal(result.metadata_reflected, true);
+  assert.equal(result.event_count, 1);
+  assert.deepEqual(requests, [
+    "POST /api/orchestrator/loops",
+    "POST /api/orchestrator/loops/loop-host-1/run",
+    "GET /api/orchestrator/loops/loop-host-1",
+    "GET /api/orchestrator/loops/loop-host-1/evidence-summary",
+    "GET /api/orchestrator/loops/loop-host-1/events"
+  ]);
+});
 
 test("plugin manifest exposes Autopilot host contract", async () => {
   const acrossHome = await mkdtemp(join(tmpdir(), "across-autopilot-manifest-"));
