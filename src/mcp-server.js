@@ -53,19 +53,7 @@ const AGENT_PLUGIN_MANIFEST_SCHEMA = {
       type: "array",
       description: "Flat capability list. Each item may be a string id or an object with id, kind, risk, description.",
       items: {
-        anyOf: [
-          { type: "string" },
-          {
-            type: "object",
-            properties: {
-              id: { type: "string" },
-              kind: { type: "string" },
-              risk: { type: "string" },
-              description: { type: "string" }
-            },
-            required: ["id"]
-          }
-        ]
+        description: "String id or capability object; the runtime validates the authoritative item shape."
       }
     },
     entrypoints: {
@@ -146,20 +134,11 @@ const VALIDATION_CONTRACT_SCHEMA = {
 };
 
 const HOST_COMMAND_SCHEMA = {
-  anyOf: [
-    { type: "array", items: { type: "string" } },
-    {
-      type: "object",
-      properties: {
-        argv: { type: "array", items: { type: "string" } },
-        command: { type: "array", items: { type: "string" } },
-        stdin: { type: "string" },
-        stdin_path: { type: "string" },
-        stdout_path: { type: "string" },
-        stderr_path: { type: "string" }
-      }
-    }
-  ]
+  description: "Direct argv array or host command object; the runtime validates the authoritative command shape."
+};
+
+const CAPABILITY_REQUIREMENT_ITEM_SCHEMA = {
+  description: "String requirement id or requirement object; the runtime validates the authoritative item shape."
 };
 
 const HOST_COMPLETION_CONTRACT_SCHEMA = {
@@ -331,8 +310,8 @@ async function handleLine(line) {
             inputSchema: {
               type: "object",
               properties: {
-                workflow_requirements: { type: "array", items: { anyOf: [{ type: "string" }, { type: "object" }] } },
-                requirements: { type: "array", items: { anyOf: [{ type: "string" }, { type: "object" }] } },
+                workflow_requirements: { type: "array", items: CAPABILITY_REQUIREMENT_ITEM_SCHEMA },
+                requirements: { type: "array", items: CAPABILITY_REQUIREMENT_ITEM_SCHEMA },
                 available_manifests: { type: "array", items: { type: "object" } },
                 manifests: { type: "array", items: { type: "object" } },
                 available_capabilities: { type: "array", items: { type: "object" } }

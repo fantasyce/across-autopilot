@@ -7,6 +7,59 @@ import { AUTOPILOT_VERSION } from "../src/version.js";
 
 const exec = promisify(execFile);
 
+const PORTABLE_DENIED_SCHEMA_KEYWORDS = new Set([
+  "anyOf",
+  "oneOf",
+  "allOf",
+  "not",
+  "if",
+  "then",
+  "else",
+  "dependentSchemas",
+  "patternProperties",
+  "unevaluatedProperties",
+  "unevaluatedItems"
+]);
+const SCHEMA_MAP_KEYWORDS = new Set(["properties", "patternProperties", "dependentSchemas", "$defs", "definitions"]);
+const SCHEMA_ARRAY_KEYWORDS = new Set(["anyOf", "oneOf", "allOf", "prefixItems"]);
+const SCHEMA_SINGLE_KEYWORDS = new Set([
+  "additionalProperties",
+  "items",
+  "contains",
+  "propertyNames",
+  "not",
+  "if",
+  "then",
+  "else",
+  "unevaluatedProperties",
+  "unevaluatedItems",
+  "contentSchema"
+]);
+
+function assertPortableSchema(node, path = "inputSchema") {
+  assert.equal(typeof node, "object", `${path} must contain an object schema`);
+  assert.notEqual(node, null, `${path} must contain an object schema`);
+  assert.equal(Array.isArray(node), false, `${path} must contain an object schema`);
+  for (const keyword of PORTABLE_DENIED_SCHEMA_KEYWORDS) {
+    assert.equal(Object.hasOwn(node, keyword), false, `${path} contains denied keyword ${keyword}`);
+  }
+  for (const [keyword, value] of Object.entries(node)) {
+    if (SCHEMA_MAP_KEYWORDS.has(keyword)) {
+      assert.equal(typeof value, "object", `${path}.${keyword} must be an object`);
+      assert.notEqual(value, null, `${path}.${keyword} must be an object`);
+      assert.equal(Array.isArray(value), false, `${path}.${keyword} must be an object`);
+      for (const [childName, child] of Object.entries(value)) {
+        assertPortableSchema(child, `${path}.${keyword}.${childName}`);
+      }
+    } else if (SCHEMA_ARRAY_KEYWORDS.has(keyword)) {
+      assert.ok(Array.isArray(value), `${path}.${keyword} must be an array`);
+      value.forEach((child, index) => assertPortableSchema(child, `${path}.${keyword}[${index}]`));
+    } else if (SCHEMA_SINGLE_KEYWORDS.has(keyword) && typeof value !== "boolean") {
+      assertPortableSchema(value, `${path}.${keyword}`);
+    }
+  }
+}
+
 test("mcp server exposes help", async () => {
   const { stdout } = await exec("node", [join(process.cwd(), "src", "mcp-server.js"), "--help"]);
   assert.match(stdout, /Usage: across-autopilot mcp/);
@@ -49,7 +102,7 @@ test("mcp server exposes generic agent plugin validation and planning", async ()
     display_name: "Demo Echo Agent",
     version: "1.0.0",
     agent: { id: "demo-echo", name: "Demo Echo", vendor: "tests" },
-    capabilities: [{ id: "echo", risk: "low" }],
+    capabilities: ["echo-text", { id: "echo", risk: "low" }],
     entrypoints: { run: { command: ["node", "-e", "console.log('ok')"] } },
     trust: { mutation_boundary: "read_only", secrets_included: false },
     context: { pack_id: "demo.echo-agent", tags: ["demo"] }
@@ -119,12 +172,20 @@ test("mcp server exposes generic agent plugin validation and planning", async ()
     assert.ok(responses[3].result.tools.some((tool) => tool.name === "discover_external_skills"));
     assert.ok(responses[3].result.tools.some((tool) => tool.name === "compact_loop_memory"));
     const tools = new Map(responses[3].result.tools.map((tool) => [tool.name, tool]));
+    for (const toolName of [
+      "validate_agent_plugin",
+      "plan_agent_plugin_run",
+      "supervise_agent_plugin_session",
+      "resolve_capabilities"
+    ]) {
+      assertPortableSchema(tools.get(toolName).inputSchema, toolName);
+    }
     const validateManifest = tools.get("validate_agent_plugin").inputSchema.properties.manifest;
     const planManifest = tools.get("plan_agent_plugin_run").inputSchema.properties.manifest;
     assert.equal(validateManifest.properties.schema_version.enum[0], "across-agent-plugin/1.0");
     assert.equal(validateManifest.properties.entrypoints.additionalProperties.properties.command.type, "array");
     assert.match(validateManifest.properties.entrypoints.additionalProperties.properties.command.description, /Direct executable argv array/);
-    assert.equal(validateManifest.properties.capabilities.items.anyOf[1].required[0], "id");
+    assert.match(validateManifest.properties.capabilities.items.description, /runtime validates/i);
     assert.equal(planManifest.properties.entrypoints.additionalProperties.properties.command.type, "array");
     const validationContractSchema = tools.get("plan_agent_plugin_run").inputSchema.properties.validation_contract;
     assert.equal(validationContractSchema.properties.schema_version.enum[0], "across-validation-contract/1.0");
@@ -137,6 +198,7 @@ test("mcp server exposes generic agent plugin validation and planning", async ()
     const normalized = JSON.parse(responses[4].result.content[0].text);
     assert.equal(normalized.schema_version, "across-agent-plugin/1.0");
     assert.equal(normalized.plugin_id, "demo.echo-agent");
+    assert.deepEqual(normalized.capabilities.map((capability) => capability.id), ["echo-text", "echo"]);
     const plan = JSON.parse(responses[5].result.content[0].text);
     assert.equal(plan.schema_version, "across-autopilot-agent-plugin-plan/1.0");
     assert.equal(plan.status, "passed");

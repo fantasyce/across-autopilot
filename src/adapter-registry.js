@@ -937,18 +937,41 @@ function reportGeneration({ spec, sources, actions, gates }) {
 
 async function memoryWriteCandidate({ spec, run, contextClient, actions, gates }) {
   const text = `Loop ${spec.id} run ${run.run_id} produced ${actions.length} actions and ${gates.length} gates.`;
-  if (!contextClient) {
+  const required = spec.memory?.required !== false;
+  const contextAvailable = contextClient
+    && (typeof contextClient.available !== "function" || contextClient.available());
+  if (!contextAvailable) {
+    if (required) {
+      throw new LoopFailure({
+        code: FAILURE_CODES.CONTEXT_UNAVAILABLE,
+        failedState: "remembering",
+        message: "Across Context is required by this workflow but is not available."
+      });
+    }
     return {
       status: "attention",
       memory: {
-        status: "pending",
+        status: "skipped",
         text,
-        mode: "context-client-not-configured"
+        mode: "optional-context-unavailable"
       }
     };
   }
-  const memory = await contextClient.rememberLoop({ spec, run, text, actions, gates });
-  return { status: memory.status === "rejected" ? "failed" : "passed", memory };
+  try {
+    const memory = await contextClient.rememberLoop({ spec, run, text, actions, gates });
+    return { status: memory.status === "rejected" ? "failed" : "passed", memory };
+  } catch (error) {
+    if (required) throw error;
+    return {
+      status: "attention",
+      memory: {
+        status: "skipped",
+        text,
+        mode: "optional-context-unavailable",
+        warning: String(error?.message || error).slice(0, 500)
+      }
+    };
+  }
 }
 
 function evaluateGate(gate, { sources, actions }) {

@@ -212,8 +212,7 @@ export const BUILT_IN_WORKFLOW_PACKS = Object.freeze({
       "action.dependency_risk_check",
       "action.license_check",
       "action.quality_gate_evaluation",
-      "output.markdown_report",
-      "memory.pending_summary"
+      "output.markdown_report"
     ],
     runtime_policy: readOnlyPolicy("low"),
     boundaries: boundary("none"),

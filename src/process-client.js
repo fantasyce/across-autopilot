@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { accessSync, constants, existsSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import { FAILURE_CODES } from "./failures.js";
 import { ecosystemBinDir } from "./paths.js";
 
@@ -219,6 +219,25 @@ export function resolveCommand(value, fallback, env = process.env) {
     return [ecosystemCommand, ...prefix];
   }
   return parsed;
+}
+
+export function commandAvailable(value, fallback, env = process.env) {
+  const [bin] = resolveCommand(value, fallback, env);
+  if (!bin) return false;
+  if (bin.includes("/")) return executableExists(bin);
+  return String(env.PATH || "/usr/local/bin:/usr/bin:/bin")
+    .split(delimiter)
+    .filter(Boolean)
+    .some((directory) => executableExists(join(directory, bin)));
+}
+
+function executableExists(path) {
+  try {
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function sanitizedSubprocessEnv(source = process.env) {
