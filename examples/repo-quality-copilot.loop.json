@@ -10,7 +10,6 @@
   "compatibility": {
     "min_autopilot_version": ">=0.2.4",
     "required_orchestrator": ">=0.7.3",
-    "required_context": ">=0.8.3",
     "required_host": ">=0.9.3"
   },
   "required_capabilities": [

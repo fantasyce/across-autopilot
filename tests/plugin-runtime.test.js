@@ -10,6 +10,11 @@ import { ContextClient } from "../src/context-client.js";
 import { OrchestratorClient } from "../src/orchestrator-client.js";
 import { AutopilotSupervisor } from "../src/supervisor.js";
 import { AUTOPILOT_VERSION } from "../src/version.js";
+import {
+  BUILT_IN_WORKFLOW_PACKS,
+  renderWorkflowPackHostExports,
+  validateWorkflowPack
+} from "../src/workflow-packs.js";
 
 const exec = promisify(execFile);
 const cli = join(process.cwd(), "src", "cli.js");
@@ -43,6 +48,36 @@ test("runtime capability preflight reflects real managed plugin availability", a
     required_capabilities: ["source.directory", "action.manifest_inspection", "output.markdown_report"]
   });
   assert.equal(standalone.status, "passed");
+});
+
+test("repo-quality workflow pack remains exportable and valid without Context", async () => {
+  const pack = BUILT_IN_WORKFLOW_PACKS["repo-quality-copilot"];
+  const loopSpec = JSON.parse(await readFile(join(process.cwd(), "examples", "repo-quality-copilot.loop.json"), "utf8"));
+  const registryWithoutContext = {
+    capabilities: () => ({
+      sources: ["source.directory"],
+      actions: [
+        "action.manifest_inspection",
+        "action.dependency_risk_check",
+        "action.license_check",
+        "action.quality_gate_evaluation"
+      ],
+      outputs: ["output.markdown_report"],
+      runtime: [],
+      tool_packs: []
+    })
+  };
+
+  const validation = validateWorkflowPack(pack, { registry: registryWithoutContext, throwOnError: false });
+  const exported = renderWorkflowPackHostExports(pack, { registry: registryWithoutContext });
+
+  assert.equal(pack.required_capabilities.includes("memory.pending_summary"), false);
+  assert.equal(Object.hasOwn(loopSpec.compatibility, "required_context"), false);
+  assert.equal(loopSpec.memory.required, false);
+  assert.equal(validation.valid, true);
+  assert.deepEqual(validation.missing_capabilities, []);
+  assert.equal(exported.status, "passed");
+  assert.deepEqual(exported.missing_capabilities, []);
 });
 
 test("OrchestratorClient uses the AAA private host socket when available", async (t) => {
