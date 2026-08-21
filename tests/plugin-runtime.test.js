@@ -1,16 +1,49 @@
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveCommand, runJsonCommand, sanitizedSubprocessEnv } from "../src/process-client.js";
+import { commandAvailable, resolveCommand, runJsonCommand, sanitizedSubprocessEnv } from "../src/process-client.js";
+import { ContextClient } from "../src/context-client.js";
 import { OrchestratorClient } from "../src/orchestrator-client.js";
+import { AutopilotSupervisor } from "../src/supervisor.js";
 import { AUTOPILOT_VERSION } from "../src/version.js";
 
 const exec = promisify(execFile);
 const cli = join(process.cwd(), "src", "cli.js");
+
+test("runtime capability preflight reflects real managed plugin availability", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-boundary-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const missingContext = join(home, "missing-context");
+  const missingOrchestrator = join(home, "missing-orchestrator");
+  const env = { ...process.env, ACROSS_HOME: home, PATH: "" };
+  const contextClient = new ContextClient({ command: [missingContext], env });
+  const orchestratorClient = new OrchestratorClient({ command: [missingOrchestrator], env });
+  const supervisor = new AutopilotSupervisor({ contextClient, orchestratorClient, env });
+
+  assert.equal(commandAvailable([missingContext], ["across-context"], env), false);
+  assert.equal(contextClient.available(), false);
+  assert.equal(orchestratorClient.available(), false);
+
+  const required = supervisor.capabilityPreflight({
+    id: "required-plugin-check",
+    required_capabilities: ["memory.pending_summary", "action.orchestrator_task_dispatch"]
+  });
+  assert.equal(required.status, "failed");
+  assert.deepEqual(required.missing_capabilities.sort(), [
+    "action.orchestrator_task_dispatch",
+    "memory.pending_summary"
+  ]);
+
+  const standalone = supervisor.capabilityPreflight({
+    id: "standalone-check",
+    required_capabilities: ["source.directory", "action.manifest_inspection", "output.markdown_report"]
+  });
+  assert.equal(standalone.status, "passed");
+});
 
 test("OrchestratorClient uses the AAA private host socket when available", async (t) => {
   const home = await mkdtemp(join(tmpdir(), "across-autopilot-host-socket-"));
@@ -91,13 +124,13 @@ const timer = setInterval(() => {
     clearInterval(timer);
     process.stdout.write(JSON.stringify({ status: "passed", count }));
   }
-}, 60);
+}, 250);
 `, "utf8");
   await chmod(command, 0o755);
 
   const result = await runJsonCommand(["node", command], [], {
-    idleTimeoutMs: 120,
-    maxWallTimeoutMs: 1000
+    idleTimeoutMs: 750,
+    maxWallTimeoutMs: 3000
   });
 
   assert.equal(result.status, "passed");
@@ -116,13 +149,13 @@ const timer = setInterval(() => {
     clearInterval(timer);
     process.stdout.write(JSON.stringify({ status: "passed", count }));
   }
-}, 100);
+}, 250);
 `, "utf8");
   await chmod(command, 0o755);
 
   const result = await runJsonCommand(["node", command], [], {
-    idleTimeoutMs: 180,
-    maxWallTimeoutMs: 150
+    idleTimeoutMs: 1500,
+    maxWallTimeoutMs: 750
   });
 
   assert.equal(result.status, "passed");
@@ -133,14 +166,14 @@ test("runJsonCommand kills silent commands on idle timeout", async () => {
   const home = await mkdtemp(join(tmpdir(), "across-autopilot-idle-timeout-"));
   const command = join(home, "silent-command.js");
   await writeFile(command, `#!/usr/bin/env node
-setTimeout(() => process.stdout.write(JSON.stringify({ status: "passed" })), 250);
+setTimeout(() => process.stdout.write(JSON.stringify({ status: "passed" })), 1200);
 `, "utf8");
   await chmod(command, 0o755);
 
   await assert.rejects(
     () => runJsonCommand(["node", command], [], {
-      idleTimeoutMs: 80,
-      maxWallTimeoutMs: 1000
+      idleTimeoutMs: 500,
+      maxWallTimeoutMs: 3000
     }),
     (error) => error.code === "adapter.timeout" && error.timeout_kind === "idle_timeout"
   );

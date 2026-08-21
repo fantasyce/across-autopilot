@@ -1,5 +1,5 @@
 import { FAILURE_CODES, LoopFailure } from "./failures.js";
-import { resolveCommand, runJsonCommand } from "./process-client.js";
+import { commandAvailable, resolveCommand, runJsonCommand } from "./process-client.js";
 
 export class ContextClient {
   constructor(options = {}) {
@@ -13,6 +13,10 @@ export class ContextClient {
       provider: "across-context",
       memory: ["pending_summary", "recall_loop", "loop_history", "loop_memory_diff"]
     };
+  }
+
+  available() {
+    return commandAvailable(this.command, ["across-context"], this.env);
   }
 
   async recall({ spec, limit = 10 }) {

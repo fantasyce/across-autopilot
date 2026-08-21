@@ -492,6 +492,12 @@ export class AutopilotSupervisor {
       ...(adapterCapabilities.tool_packs || []).map((pack) => `tool_pack.${pack.id}`),
       "memory.pending_summary"
     ]);
+    if (typeof this.contextClient?.available === "function" && !this.contextClient.available()) {
+      available.delete("memory.pending_summary");
+    }
+    if (typeof this.orchestratorClient?.available === "function" && !this.orchestratorClient.available()) {
+      available.delete("action.orchestrator_task_dispatch");
+    }
     const required = [...new Set((spec.required_capabilities || []).map((item) => String(item || "").trim()).filter(Boolean))];
     const missing = required.filter((capability) => !available.has(capability));
     return {

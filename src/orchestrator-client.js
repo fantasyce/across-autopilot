@@ -1,5 +1,5 @@
 import { FAILURE_CODES, LoopFailure } from "./failures.js";
-import { resolveCommand, runJsonCommand } from "./process-client.js";
+import { commandAvailable, resolveCommand, runJsonCommand } from "./process-client.js";
 import { existsSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 
@@ -18,6 +18,12 @@ export class OrchestratorClient {
       actions: ["orchestrator_task_dispatch", "quality_gate_evaluation"],
       metadata_reflection: true
     };
+  }
+
+  available() {
+    const socketPath = hostSocketPath(this.env);
+    return Boolean(socketPath && this.hostSocketExists(socketPath))
+      || commandAvailable(this.command, ["across-orchestrator"], this.env);
   }
 
   async runLoopTask({ spec, run }) {

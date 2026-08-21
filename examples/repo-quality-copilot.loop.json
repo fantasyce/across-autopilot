@@ -19,8 +19,7 @@
     "action.dependency_risk_check",
     "action.license_check",
     "action.quality_gate_evaluation",
-    "output.markdown_report",
-    "memory.pending_summary"
+    "output.markdown_report"
   ],
   "trigger": {
     "type": "manual"
@@ -98,6 +97,7 @@
   ],
   "memory": {
     "provider": "across-context",
+    "required": false,
     "recall": true,
     "remember": true,
     "write_status": "pending"
