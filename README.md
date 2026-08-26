@@ -159,9 +159,13 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.5.3`. It is source-first and GitHub-first: hosts can
-install it from the `v0.5.3` tag as a managed Across plugin, and the npm package
+The current release is `v0.5.4`. It is source-first and GitHub-first: hosts can
+install it from the `v0.5.4` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.5.4` adds durable trigger claim leases, recovery of expired claims,
+bounded preparation and execution retries, and reconciliation of runs whose
+executor exited before recording terminal evidence.
 
 `v0.5.3` publishes portable MCP tool schemas for strict hosts and makes Context
 availability follow the declared workflow requirement: optional memory degrades

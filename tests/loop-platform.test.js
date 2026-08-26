@@ -16,6 +16,7 @@ import { runJsonCommand } from "../src/process-client.js";
 import { buildToolPackRegistry } from "../src/tool-packs.js";
 import { buildRoleEvidence } from "../src/roles.js";
 import { buildEvidenceEnvelope } from "../src/evidence.js";
+import { TriggerQueue } from "../src/trigger-queue.js";
 
 const exec = promisify(execFile);
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -1466,6 +1467,117 @@ test("trigger queue deduplicates payloads and dispatches through the supervisor"
   assert.equal(dispatched.evidence.roles.roles.some((role) => role.role === "tool"), true);
   assert.equal(completed.status, "completed");
   assert.equal(completed.run_id, dispatched.run.run_id);
+});
+
+test("trigger queue recovers an expired claimed item after a host interruption", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-trigger-recovery-"));
+  const queue = new TriggerQueue({
+    env: { ...process.env, ACROSS_HOME: home },
+    defaultClaimLeaseMs: 1_000,
+    claimLeaseGraceMs: 0
+  });
+  const spec = minimalSpec({
+    id: "recoverable-queued-loop",
+    actions: ["manifest_inspection"],
+    outputs: ["noop_output"]
+  });
+  const enqueuedAt = new Date("2026-07-20T02:00:00.000Z");
+  const trigger = await queue.enqueue(spec, { type: "cron", payload: { reason: "lease-recovery" } }, { now: enqueuedAt });
+  const claimed = await queue.claim(trigger.trigger_id, { now: enqueuedAt });
+
+  assert.equal(claimed.status, "claimed");
+  assert.equal(claimed.claim_attempt_count, 1);
+  assert.equal(claimed.claim_lease_expires_at, "2026-07-20T02:00:01.000Z");
+
+  const recovered = await queue.list({ now: new Date("2026-07-20T02:00:02.000Z") });
+  const recoveredItem = recovered.items.find((item) => item.trigger_id === trigger.trigger_id);
+  assert.equal(recoveredItem.status, "pending");
+  assert.equal(recoveredItem.recovery_count, 1);
+  assert.equal(recoveredItem.last_recovery_reason, "claim_lease_expired");
+
+  const reclaimed = await queue.claimNext({ now: new Date("2026-07-20T02:00:03.000Z") });
+  assert.equal(reclaimed.trigger_id, trigger.trigger_id);
+  assert.equal(reclaimed.status, "claimed");
+  assert.equal(reclaimed.claim_attempt_count, 2);
+});
+
+test("trigger queue uses a short preparation lease and renews it for execution", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-trigger-renew-"));
+  const queue = new TriggerQueue({
+    env: { ...process.env, ACROSS_HOME: home },
+    defaultClaimLeaseMs: 120_000,
+    claimLeaseGraceMs: 0
+  });
+  const spec = minimalSpec({ id: "lease-renew-loop", actions: ["manifest_inspection"], outputs: ["noop_output"] });
+  const claimedAt = new Date("2026-07-20T02:30:00.000Z");
+  const trigger = await queue.enqueue(spec, { type: "cron" }, { now: claimedAt });
+  const claimed = await queue.claim(trigger.trigger_id, { now: claimedAt, leaseMs: 30_000 });
+  assert.equal(claimed.claim_lease_expires_at, "2026-07-20T02:30:30.000Z");
+
+  const renewed = await queue.renewClaim(trigger.trigger_id, { now: new Date("2026-07-20T02:30:10.000Z") });
+  assert.equal(renewed.execution_started_at, "2026-07-20T02:30:10.000Z");
+  assert.equal(renewed.claim_lease_expires_at, "2026-07-20T02:32:10.000Z");
+});
+
+test("trigger queue releases preparation failures with bounded retry metadata", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-trigger-release-"));
+  const queue = new TriggerQueue({ env: { ...process.env, ACROSS_HOME: home } });
+  const spec = minimalSpec({
+    id: "preparation-retry-loop",
+    actions: ["manifest_inspection"],
+    outputs: ["noop_output"]
+  });
+  const now = new Date("2026-07-20T03:00:00.000Z");
+  const trigger = await queue.enqueue(spec, { type: "cron" }, { now });
+  await queue.claim(trigger.trigger_id, { now });
+  const released = await queue.release(trigger.trigger_id, {
+    now,
+    retryAfterMs: 30_000,
+    failure: { code: "source_mirror_refresh_failed", retryable: true }
+  });
+
+  assert.equal(released.status, "pending");
+  assert.equal(released.claimed_at, null);
+  assert.equal(released.claim_lease_expires_at, null);
+  assert.equal(released.not_before, "2026-07-20T03:00:30.000Z");
+  assert.equal(released.preparation_failure_count, 1);
+  assert.equal(released.preparation_retry_exhausted, false);
+  assert.equal(released.last_release_reason, "source_mirror_refresh_failed");
+  assert.equal((await queue.claimNext({ now: new Date("2026-07-20T03:00:29.000Z") })), null);
+  assert.equal((await queue.claimNext({ now: new Date("2026-07-20T03:00:31.000Z") })).trigger_id, trigger.trigger_id);
+});
+
+test("trigger queue stops retrying after the bounded preparation failure budget", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-trigger-release-budget-"));
+  const queue = new TriggerQueue({
+    env: { ...process.env, ACROSS_HOME: home },
+    maxPreparationFailures: 2,
+    maxPreparationBackoffMs: 60_000
+  });
+  const spec = minimalSpec({ id: "bounded-preparation-loop", actions: ["manifest_inspection"], outputs: ["noop_output"] });
+  const firstAt = new Date("2026-07-20T04:00:00.000Z");
+  const trigger = await queue.enqueue(spec, { type: "cron" }, { now: firstAt });
+  await queue.claim(trigger.trigger_id, { now: firstAt });
+  const first = await queue.release(trigger.trigger_id, {
+    now: firstAt,
+    retryAfterMs: 30_000,
+    failure: { code: "source_mirror_refresh_failed", retryable: true }
+  });
+  assert.equal(first.status, "pending");
+  assert.equal(first.not_before, "2026-07-20T04:00:30.000Z");
+
+  const secondAt = new Date("2026-07-20T04:00:31.000Z");
+  await queue.claim(trigger.trigger_id, { now: secondAt });
+  const exhausted = await queue.release(trigger.trigger_id, {
+    now: secondAt,
+    retryAfterMs: 30_000,
+    failure: { code: "source_mirror_refresh_failed", retryable: true }
+  });
+  assert.equal(exhausted.status, "failed");
+  assert.equal(exhausted.preparation_failure_count, 2);
+  assert.equal(exhausted.preparation_retry_exhausted, true);
+  assert.equal(exhausted.failure.retryable, false);
+  assert.equal(exhausted.completed_at, secondAt.toISOString());
 });
 
 test("queued trigger records failure when the dispatched run fails", async () => {
@@ -5410,6 +5522,65 @@ test("cancel terminates a recorded run executor process", async () => {
       await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 2000))]);
     }
   }
+});
+
+test("listing runs reconciles a dead executor and releases its claimed trigger", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-recover-run-"));
+  const env = { ...process.env, ACROSS_HOME: home };
+  const store = new RunStore({ env });
+  const triggerQueue = new TriggerQueue({ env });
+  const supervisor = new AutopilotSupervisor({
+    store,
+    triggerQueue,
+    orchestratorClient: new FakeOrchestrator(),
+    contextClient: new FakeContext()
+  });
+  const now = new Date("2026-07-20T19:00:00.000Z");
+  const spec = { id: "recover-interrupted-loop", trigger: { type: "cron" } };
+  const triggerEvent = {
+    type: "cron",
+    source: "test-scheduler",
+    idempotency_key: "recover-interrupted-loop:2026-07-20"
+  };
+  const queued = await triggerQueue.enqueue(spec, triggerEvent, { now });
+  await triggerQueue.claim(queued.trigger_id, { now });
+  const deadRun = await store.createRun(spec, { now, trigger: triggerEvent });
+  await triggerQueue.attachRun(queued.trigger_id, deadRun.run_id);
+  await store.updateRun(deadRun.run_id, {
+    state: "running",
+    status: "running",
+    started_at: now.toISOString(),
+    executor: { pid: 99_999_999, role: "loop_run", started_at: now.toISOString() }
+  });
+  await store.writeEvidence(deadRun.run_id, {
+    schema_version: "across-loop-evidence/1.0",
+    run_id: deadRun.run_id,
+    status: "running"
+  });
+  const liveRun = await store.createRun({ id: "live-loop" }, { now: new Date(now.getTime() + 1_000) });
+  await store.updateRun(liveRun.run_id, {
+    state: "running",
+    status: "running",
+    started_at: new Date().toISOString(),
+    executor: { pid: process.pid, role: "loop_run", started_at: new Date().toISOString() }
+  });
+
+  const runs = await supervisor.listRuns();
+  const recovered = runs.find((run) => run.run_id === deadRun.run_id);
+  const stillLive = runs.find((run) => run.run_id === liveRun.run_id);
+  const evidence = await store.loadEvidence(deadRun.run_id);
+  const queue = await triggerQueue.list({ now });
+  const retriedTrigger = queue.items.find((item) => item.trigger_id === queued.trigger_id);
+
+  assert.equal(recovered.status, "failed");
+  assert.equal(recovered.state, "interrupted");
+  assert.equal(recovered.failure.code, "runtime.interrupted");
+  assert.equal(evidence.status, "failed");
+  assert.equal(evidence.failure.code, "runtime.interrupted");
+  assert.equal(retriedTrigger.status, "pending");
+  assert.equal(retriedTrigger.last_interrupted_run_id, deadRun.run_id);
+  assert.equal(retriedTrigger.execution_interruption_count, 1);
+  assert.equal(stillLive.status, "running");
 });
 
 test("telemetry aggregates completed runs without raw source text", async () => {
