@@ -319,6 +319,19 @@ async function handleLoopCommand(args) {
     return printPayload(await supervisor.enqueueTrigger(required(spec, "--spec"), triggerOptions(parsed)), parsed);
   }
   if (subcommand === "trigger-queue") return printPayload(await supervisor.triggerQueueStatus(), parsed);
+  if (subcommand === "claim-trigger") {
+    return printPayload(await supervisor.claimQueuedTrigger(parsed["trigger-id"] || null, {
+      leaseMs: parsed["lease-ms"] === undefined ? null : Number(parsed["lease-ms"])
+    }), parsed);
+  }
+  if (subcommand === "run-claimed-trigger") return printPayload(await supervisor.runClaimedTrigger(required(parsed["trigger-id"], "--trigger-id")), parsed);
+  if (subcommand === "release-trigger") {
+    return printPayload(await supervisor.releaseClaimedTrigger(required(parsed["trigger-id"], "--trigger-id"), {
+      code: parsed.code || "preparation_failed",
+      message: parsed.message || "Trigger preparation failed.",
+      retryAfterMs: parsed["retry-after-ms"] === undefined ? 300000 : Number(parsed["retry-after-ms"])
+    }), parsed);
+  }
   if (subcommand === "run-trigger") return printPayload(await supervisor.runQueuedTrigger(parsed["trigger-id"] || null), parsed);
   if (subcommand === "status") return printPayload(await supervisor.status(required(parsed["run-id"], "--run-id")), parsed);
   if (subcommand === "evidence") return printPayload(await supervisor.evidence(required(parsed["run-id"], "--run-id")), parsed);
@@ -546,6 +559,9 @@ Commands:
   loop task-status --task-id id --json
   loop enqueue-trigger --spec path --type cron --payload-json '{}' --json
   loop trigger-queue --json
+  loop claim-trigger [--trigger-id id] [--lease-ms n] --json
+  loop run-claimed-trigger --trigger-id id --json
+  loop release-trigger --trigger-id id [--retry-after-ms n] --json
   loop run-trigger [--trigger-id id] --json
   loop status --run-id id --json
   loop evidence --run-id id --json

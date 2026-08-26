@@ -288,6 +288,7 @@ export class AutopilotSupervisor {
   }
 
   async taskStatus(taskIdOrRunId) {
+    await this.recoverInterruptedRuns();
     const run = await this.store.loadRun(runIdForTaskId(taskIdOrRunId));
     return run.async_task || asyncTaskEnvelope(run);
   }
@@ -303,10 +304,10 @@ export class AutopilotSupervisor {
     return this.triggerQueue.list();
   }
 
-  async runQueuedTrigger(triggerId = null) {
+  async claimQueuedTrigger(triggerId = null, { leaseMs = null } = {}) {
     const item = triggerId
-      ? await this.triggerQueue.claim(triggerId)
-      : await this.triggerQueue.claimNext();
+      ? await this.triggerQueue.claim(triggerId, { leaseMs })
+      : await this.triggerQueue.claimNext({ leaseMs });
     if (!item) {
       return {
         schema_version: "across-autopilot-trigger-dispatch/1.0",
@@ -316,9 +317,63 @@ export class AutopilotSupervisor {
         evidence: null
       };
     }
+    return {
+      schema_version: "across-autopilot-trigger-dispatch/1.0",
+      status: "claimed",
+      trigger: item,
+      run: null,
+      evidence: null
+    };
+  }
+
+  async releaseClaimedTrigger(triggerId, { code = "preparation_failed", message = "Trigger preparation failed.", retryAfterMs = 300000 } = {}) {
+    const failure = {
+      adapter_id: "autopilot_trigger_preparation",
+      code: String(code || "preparation_failed"),
+      failed_state: "preparing",
+      message: String(message || "Trigger preparation failed."),
+      retryable: true
+    };
+    const item = await this.triggerQueue.release(triggerId, { failure, retryAfterMs });
+    return {
+      schema_version: "across-autopilot-trigger-dispatch/1.0",
+      status: item?.status || "idle",
+      trigger: item,
+      run: null,
+      evidence: null
+    };
+  }
+
+  async runClaimedTrigger(triggerId) {
+    const queue = await this.triggerQueue.list();
+    const selected = queue.items.find((candidate) => candidate.trigger_id === triggerId && candidate.status === "claimed");
+    const item = selected ? await this.triggerQueue.renewClaim(triggerId) : null;
+    if (!item) {
+      return {
+        schema_version: "across-autopilot-trigger-dispatch/1.0",
+        status: "idle",
+        trigger: null,
+        run: null,
+        evidence: null
+      };
+    }
+    return this.executeClaimedTrigger(item);
+  }
+
+  async runQueuedTrigger(triggerId = null) {
+    const claimed = await this.claimQueuedTrigger(triggerId);
+    if (claimed.status !== "claimed" || !claimed.trigger) return claimed;
+    return this.executeClaimedTrigger(claimed.trigger);
+  }
+
+  async executeClaimedTrigger(item) {
     try {
       const activeSpec = item.spec_snapshot || item.spec_source || item.spec_id;
-      const result = await this.run(activeSpec, { trigger: item.trigger_event });
+      const validation = await this.validateSpec(activeSpec);
+      const spec = validation.migration.spec;
+      const preparedRun = await this.store.createRun(spec, { trigger: item.trigger_event });
+      await this.triggerQueue.attachRun(item.trigger_id, preparedRun.run_id);
+      const result = await this.run(spec, { trigger: item.trigger_event, validation, spec, preparedRun });
       const triggerStatus = result.run.status === "completed" ? "completed" : "failed";
       const platformSelfRepair = triggerStatus === "failed"
         ? await this.maybeEnqueuePlatformSelfRepair({
@@ -399,10 +454,12 @@ export class AutopilotSupervisor {
   }
 
   async status(runId) {
+    await this.recoverInterruptedRuns();
     return this.store.loadRun(runId);
   }
 
   async evidence(runId) {
+    await this.recoverInterruptedRuns();
     return this.store.loadEvidence(runId);
   }
 
@@ -454,11 +511,93 @@ export class AutopilotSupervisor {
   }
 
   async listRuns() {
+    await this.recoverInterruptedRuns();
     return this.store.listRuns();
   }
 
   async telemetry() {
+    await this.recoverInterruptedRuns();
     return buildTelemetry(this.store);
+  }
+
+  async recoverInterruptedRuns({ now = new Date() } = {}) {
+    const runs = await this.store.listRuns();
+    const recovered = [];
+    for (const run of runs) {
+      if (run?.status !== "running" || !run?.executor?.pid || executorIsAlive(run.executor)) continue;
+      const failure = {
+        code: FAILURE_CODES.RUNTIME_INTERRUPTED,
+        retryable: true,
+        failed_state: run.state || "running",
+        adapter_id: "autopilot_runtime",
+        message: "The run executor exited before recording a terminal result.",
+        recovery: {
+          type: "retry",
+          description: "Retry the same trigger after the bounded backoff window.",
+          requires_user_action: false
+        },
+        evidence_refs: [],
+        caused_by: []
+      };
+      const completedAt = now.toISOString();
+      const next = await this.store.updateRun(run.run_id, {
+        status: "failed",
+        state: "interrupted",
+        completed_at: completedAt,
+        failure,
+        ...(run.async_task ? {
+          async_task: asyncTaskEnvelope(run, {
+            status: "failed",
+            state: "interrupted",
+            completed_at: completedAt,
+            updated_at: completedAt
+          })
+        } : {})
+      });
+      await this.store.audit(
+        run.run_id,
+        run.spec_id,
+        "run_interrupted_recovered",
+        "Interrupted run reconciled after its executor exited.",
+        { executor: run.executor, failure }
+      );
+      let evidence = {};
+      try {
+        evidence = await this.store.loadEvidence(run.run_id);
+      } catch {
+        evidence = {};
+      }
+      await this.store.writeEvidence(run.run_id, {
+        ...evidence,
+        schema_version: evidence.schema_version || "across-loop-evidence/1.0",
+        run_id: run.run_id,
+        spec_id: run.spec_id,
+        status: "failed",
+        state: "interrupted",
+        completed_at: completedAt,
+        failure
+      });
+      const queue = await this.triggerQueue.list({ now, recoverExpired: false });
+      const trigger = queue.items.find((candidate) => (
+        candidate.status === "claimed"
+        && (candidate.run_id === run.run_id
+          || candidate.idempotency_key === run.trigger_event?.idempotency_key)
+      ));
+      if (trigger) {
+        await this.triggerQueue.interruptExecution(trigger.trigger_id, {
+          runId: run.run_id,
+          failure,
+          now
+        });
+      }
+      recovered.push(next);
+    }
+    return {
+      schema_version: "across-autopilot-run-recovery/1.0",
+      status: recovered.length ? "recovered" : "idle",
+      recovered_count: recovered.length,
+      runs: recovered
+    };
   }
 
   async setSpecPaused(specId, paused) {
@@ -1075,6 +1214,30 @@ function currentExecutorRecord(role) {
     ppid: process.ppid,
     started_at: new Date().toISOString()
   };
+}
+
+function executorIsAlive(executor) {
+  const pid = Number(executor?.pid);
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+  if (pid === process.pid) return true;
+  const recordedStart = Date.parse(String(executor?.started_at || ""));
+  if (!Number.isFinite(recordedStart)) return true;
+  try {
+    const processStartText = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+    const processStart = Date.parse(processStartText);
+    if (!Number.isFinite(processStart)) return true;
+    return processStart <= recordedStart && recordedStart - processStart < 5 * 60 * 1000;
+  } catch {
+    return true;
+  }
 }
 
 function terminateRunProcessTree(pid) {
