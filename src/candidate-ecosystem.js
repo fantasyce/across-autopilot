@@ -17,6 +17,7 @@ import {
   targetGenerationPolicy
 } from "./loop-state.js";
 import { buildPushReceipt, normalizeQualityFindings } from "./findings.js";
+import { normalizeGoalContract, stableGoalHash } from "./goal-contract.js";
 
 const exec = promisify(execFile);
 
@@ -1837,6 +1838,7 @@ export async function runCandidateSelfHostingProbe({ spec, run, actions, env = p
 }
 
 export function buildCandidatePromotionEvidence({ spec, run, actions }) {
+  const goalContract = spec.goal_contract ? normalizeGoalContract(spec.goal_contract) : null;
   const acquire = actionResult(actions, "candidate_ecosystem_acquire") || {};
   const mutation = actionResult(actions, "host_code_iteration") || actionResult(actions, "candidate_workspace_patch") || {};
   const diff = actionResult(actions, "candidate_ecosystem_diff") || actionResult(actions, "candidate_diff_summary") || {};
@@ -1897,6 +1899,12 @@ export function buildCandidatePromotionEvidence({ spec, run, actions }) {
   return {
     status: ready ? "passed" : "attention",
     promotion_ready: ready,
+    ...(goalContract ? {
+      goal_id: goalContract.goal_id,
+      goal_revision: goalContract.revision,
+      input_fingerprint: stableGoalHash(goalContract),
+      criterion_ids: goalContract.acceptance_criteria.map((criterion) => criterion.criterion_id)
+    } : {}),
     candidate_id: acquire.candidate_id || null,
     mode: acquire.mode || null,
     candidate_root: acquire.base_dir || null,
@@ -1983,6 +1991,12 @@ export function buildCandidatePromotionEvidence({ spec, run, actions }) {
     },
     promotion_package: {
       schema_version: "across-autopilot-promotion-package/1.0",
+      ...(goalContract ? {
+        goal_id: goalContract.goal_id,
+        goal_revision: goalContract.revision,
+        input_fingerprint: stableGoalHash(goalContract),
+        criterion_ids: goalContract.acceptance_criteria.map((criterion) => criterion.criterion_id)
+      } : {}),
       candidate_id: acquire.candidate_id || null,
       manifest_path: acquire.manifest_path || null,
       source_a_unchanged: validation.source_unchanged?.unchanged === true,

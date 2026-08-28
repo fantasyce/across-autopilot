@@ -10,6 +10,10 @@ const proposalOperations = new Set(["add", "replace", "remove"]);
 const proposalDecisions = new Set(["pending", "accepted", "partially_accepted", "rejected", "superseded"]);
 const hostOwnedPaths = new Set(["/confirmed_by", "/confirmed_at", "/revision", "/goal_id", "/task_id"]);
 
+function isHostOwnedPath(path) {
+  return [...hostOwnedPaths].some((owned) => path === owned || path.startsWith(`${owned}/`));
+}
+
 
 function normalizedText(value) {
   return String(value ?? "").normalize("NFKC").trim().replace(/\s+/gu, " ");
@@ -126,7 +130,7 @@ export function normalizeGoalChangeProposal(value = {}) {
     objectValue(operation, "operation");
     if (!proposalOperations.has(operation.op)) throw new TypeError("proposal operation is invalid");
     const path = requiredText(operation.path, "operation path");
-    if (!path.startsWith("/") || hostOwnedPaths.has(path)) throw new TypeError("proposal operation targets host-owned fields");
+    if (!path.startsWith("/") || isHostOwnedPath(path)) throw new TypeError("proposal operation targets host-owned fields");
     if (operation.op !== "remove" && !("value" in operation)) throw new TypeError("proposal operation value is required");
   }
   const impact = objectValue(proposal.impact_summary, "impact_summary");

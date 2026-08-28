@@ -12,6 +12,7 @@ import { RunStore } from "./run-store.js";
 import { buildTelemetry } from "./telemetry.js";
 import { TriggerQueue } from "./trigger-queue.js";
 import { roleForAdapter } from "./roles.js";
+import { normalizeGoalContract, stableGoalHash } from "./goal-contract.js";
 
 const MODEL_BACKED_ACTIONS = new Set([
   "orchestrator_task_dispatch",
@@ -97,6 +98,7 @@ export class AutopilotSupervisor {
     let outputs = [];
     let memory = { recalled: [], written: [] };
     let failure = null;
+    const goalContract = options.goalContract ? normalizeGoalContract(options.goalContract) : null;
     try {
       const validation = options.validation || await this.validateSpec(pathOrId);
       spec = options.spec || applyRuntimeModelOverrides(validation.migration.spec, options.modelOverrides);
@@ -133,12 +135,12 @@ export class AutopilotSupervisor {
 
       await this.assertRunNotCancelled(run);
       await this.store.transition(run.run_id, "planning", "Planning actions.");
-      const plan = this.buildPlan(spec, sources, memory.recalled);
+      const plan = this.buildPlan(spec, sources, memory.recalled, goalContract);
       await this.store.writePlan(run.run_id, plan);
 
       await this.assertRunNotCancelled(run);
       await this.store.transition(run.run_id, "running", "Running adapters.");
-      actions = await this.runActions(spec, run, sources, memory.recalled);
+      actions = await this.runActions(spec, run, sources, memory.recalled, goalContract);
       gates = extractGates(actions);
 
       await this.assertRunNotCancelled(run);
@@ -208,7 +210,8 @@ export class AutopilotSupervisor {
       memory,
       risks: collectRisks(actions, gates, failure),
       audit,
-      failure
+      failure,
+      goalContract
     });
     await this.store.writeEvidence(run.run_id, evidence);
     return { run, evidence };
@@ -433,7 +436,7 @@ export class AutopilotSupervisor {
     return { diagnosis, trigger: queued };
   }
 
-  async writeEvidenceSnapshot({ spec, run, sources = [], actions = [], gates = [], outputs = [], memory = {}, failure = null }) {
+  async writeEvidenceSnapshot({ spec, run, sources = [], actions = [], gates = [], outputs = [], memory = {}, failure = null, goalContract = null }) {
     if (!spec || !run?.run_id) return null;
     const currentRun = await this.store.loadRun(run.run_id);
     const audit = await this.store.events(run.run_id);
@@ -447,7 +450,8 @@ export class AutopilotSupervisor {
       memory,
       risks: collectRisks(actions, gates, failure),
       audit,
-      failure
+      failure,
+      goalContract
     });
     await this.store.writeEvidence(run.run_id, evidence);
     return evidence;
@@ -690,8 +694,8 @@ export class AutopilotSupervisor {
     return records;
   }
 
-  buildPlan(spec, sources, recalledMemory) {
-    return {
+  buildPlan(spec, sources, recalledMemory, goalContract = null) {
+    const base = {
       schema_version: "across-loop-plan/1.0",
       spec_id: spec.id,
       source_count: sources.length,
@@ -699,10 +703,35 @@ export class AutopilotSupervisor {
       actions: spec.used_adapters.actions,
       outputs: spec.outputs
     };
+    if (!goalContract) return base;
+    const contract = normalizeGoalContract(goalContract);
+    const actionIds = [...(spec.used_adapters?.actions || [])];
+    const plannedActions = actionIds.map((adapter) => ({ adapter, criterion_ids: [] }));
+    const hostDecisions = [];
+    const executableCriteria = contract.acceptance_criteria.filter((criterion) => criterion.review_policy !== "human");
+    executableCriteria.forEach((criterion, index) => {
+      if (plannedActions.length) {
+        plannedActions[index % plannedActions.length].criterion_ids.push(criterion.criterion_id);
+      } else {
+        hostDecisions.push({ kind: "execution_planning_required", criterion_ids: [criterion.criterion_id] });
+      }
+    });
+    for (const criterion of contract.acceptance_criteria.filter((item) => item.review_policy === "human")) {
+      hostDecisions.push({ kind: "human_review", criterion_ids: [criterion.criterion_id] });
+    }
+    return {
+      ...base,
+      goal_id: contract.goal_id,
+      goal_revision: contract.revision,
+      input_fingerprint: stableGoalHash(contract),
+      actions: plannedActions,
+      host_decisions: hostDecisions
+    };
   }
 
-  async runActions(spec, run, sources, recalledMemory) {
+  async runActions(spec, run, sources, recalledMemory, goalContract = null) {
     const actions = [];
+    const goalPlan = goalContract ? this.buildPlan(spec, sources, recalledMemory, goalContract) : null;
     let gates = [];
     const runtimeBudget = createRuntimeBudgetGuard(spec, run);
     for (const actionId of spec.used_adapters.actions || []) {
@@ -718,7 +747,8 @@ export class AutopilotSupervisor {
         sources,
         actions: [...actions, runningActionRecord(actionId, actionId, startedAt, spec)],
         gates,
-        memory: { recalled: recalledMemory, written: [] }
+        memory: { recalled: recalledMemory, written: [] },
+        goalContract
       });
       let action;
       try {
@@ -747,6 +777,10 @@ export class AutopilotSupervisor {
           result: { status: "failed" },
           failure
         };
+        if (goalPlan) {
+          const planned = goalPlan.actions.find((item) => item.adapter === actionId);
+          action.criterion_ids = [...(planned?.criterion_ids || [])];
+        }
         actions.push(action);
         await this.store.audit(run.run_id, spec.id, "action_completed", `Action ${actionId} failed.`, { adapter: actionId, status: "failed", failure });
         await this.writeEvidenceSnapshot({
@@ -756,7 +790,8 @@ export class AutopilotSupervisor {
           actions,
           gates: gates.length ? gates : extractGates(actions),
           memory: { recalled: recalledMemory, written: [] },
-          failure
+          failure,
+          goalContract
         });
         const wrapped = new LoopFailure({
           code: failure.code || FAILURE_CODES.ADAPTER_INVALID_OUTPUT,
@@ -771,6 +806,10 @@ export class AutopilotSupervisor {
         wrapped.partialGates = gates.length ? gates : extractGates(actions);
         throw wrapped;
       }
+      if (goalPlan) {
+        const planned = goalPlan.actions.find((item) => item.adapter === actionId);
+        action.criterion_ids = [...(planned?.criterion_ids || [])];
+      }
       actions.push(action);
       await this.assertRunNotCancelled(run);
       if (action.adapter === "quality_gate_evaluation") gates = action.result.gates || [];
@@ -781,7 +820,8 @@ export class AutopilotSupervisor {
         sources,
         actions,
         gates: gates.length ? gates : extractGates(actions),
-        memory: { recalled: recalledMemory, written: [] }
+        memory: { recalled: recalledMemory, written: [] },
+        goalContract
       });
       if (action.status === "failed" && action.failure && action.adapter !== "semantic_alignment_review") {
         const failure = new LoopFailure({

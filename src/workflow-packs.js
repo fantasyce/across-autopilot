@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { normalizeRuntimePolicy, PACKAGE_ROOT } from "./loop-spec.js";
 import { buildScenarioJobManifest, planScenarioInputFromGoal } from "./scenario-simulation.js";
+import { normalizeGoalContract, stableGoalHash } from "./goal-contract.js";
 
 export const WORKFLOW_PACK_SCHEMA = "across-workflow-pack/1.0";
 export const WORKFLOW_PACK_PRODUCT_CARD_SCHEMA = "across-workflow-pack-product-card/1.0";
@@ -348,7 +349,7 @@ export function resolveWorkflowPackForGoal(goal, { requestedPackId = null } = {}
   return workflowResolution(cleanGoal, winner.pack, winner);
 }
 
-export function buildWorkflowWorkerJobPlan({ packId, goal, projectId = null, liveModel = true } = {}) {
+export function buildWorkflowWorkerJobPlan({ packId, goal, projectId = null, liveModel = true, goalContract = null } = {}) {
   const pack = BUILT_IN_WORKFLOW_PACKS[String(packId || "")];
   if (!pack) throw new Error(`Unknown workflow pack: ${packId}`);
   const execution = pack.execution || {};
@@ -356,7 +357,7 @@ export function buildWorkflowWorkerJobPlan({ packId, goal, projectId = null, liv
   const planner = WORKER_JOB_PLANNERS[execution.worker_job_planner];
   if (!planner) throw new Error(`Workflow pack ${pack.id} has no Worker Job planner`);
   const planned = planner({ goal, projectId: projectId || `project-${randomUUID()}`, liveModel });
-  return {
+  const result = {
     schema_version: "across-workflow-worker-job-plan/1.0",
     workflow_id: pack.id,
     workflow_title: pack.title,
@@ -370,9 +371,10 @@ export function buildWorkflowWorkerJobPlan({ packId, goal, projectId = null, liv
     expected_outputs: asArray(planned.manifest.expected_outputs),
     user_summary: userWorkflowSummary(pack)
   };
+  return withGoalBinding(result, goalContract, "worker-execution");
 }
 
-export function buildWorkflowExecutionPlan({ packId, goal, projectId = null, liveModel = true } = {}) {
+export function buildWorkflowExecutionPlan({ packId, goal, projectId = null, liveModel = true, goalContract = null } = {}) {
   const pack = BUILT_IN_WORKFLOW_PACKS[String(packId || "")];
   if (!pack) throw new Error(`Unknown workflow pack: ${packId}`);
   const cleanGoal = String(goal || "").trim();
@@ -397,10 +399,11 @@ export function buildWorkflowExecutionPlan({ packId, goal, projectId = null, liv
       packId: pack.id,
       goal: cleanGoal,
       projectId: base.project_id,
-      liveModel
+      liveModel,
+      goalContract
     });
     const expectedOutputs = asArray(workerJobPlan.expected_outputs).map(String).filter(Boolean);
-    return {
+    return withGoalBinding({
       ...base,
       expected_outputs: expectedOutputs,
       deliverables: expectedOutputs,
@@ -415,11 +418,11 @@ export function buildWorkflowExecutionPlan({ packId, goal, projectId = null, liv
       }],
       adapter: { type: "worker" },
       worker_job_plan: workerJobPlan
-    };
+    }, goalContract, "worker-execution");
   }
 
   const deliverables = localWorkflowDeliverables(pack);
-  return {
+  return withGoalBinding({
     ...base,
     expected_outputs: deliverables,
     deliverables,
@@ -438,6 +441,22 @@ export function buildWorkflowExecutionPlan({ packId, goal, projectId = null, liv
       loop_spec_id: pack.loop_spec_id
     },
     worker_job_plan: null
+  }, goalContract, "workflow-pack-execution");
+}
+
+function withGoalBinding(plan, goalContract, subtaskId) {
+  if (!goalContract) return plan;
+  const contract = normalizeGoalContract(goalContract);
+  const criterionIds = contract.acceptance_criteria.map((criterion) => criterion.criterion_id);
+  return {
+    ...plan,
+    goal_id: contract.goal_id,
+    goal_revision: contract.revision,
+    input_fingerprint: stableGoalHash(contract),
+    subtasks: (plan.subtasks || []).map((subtask) => ({
+      ...subtask,
+      criterion_ids: subtask.id === subtaskId ? [...criterionIds] : []
+    }))
   };
 }
 

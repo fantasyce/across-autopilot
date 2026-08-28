@@ -87,3 +87,23 @@ test("autopilot proposals cannot perform management operations", () => {
 
   assert.throws(() => normalizeGoalChangeProposal(proposal), /operation/);
 });
+
+
+test("autopilot proposals cannot target descendants of host-owned fields", () => {
+  const proposal = {
+    schema_version: "across-goal-change-proposal/1.0",
+    proposal_id: "proposal-nested-host-field",
+    goal_id: "goal-task-001",
+    base_goal_revision: 1,
+    proposed_by: "autopilot",
+    reason: "Attempt nested host mutation.",
+    operations: [{ op: "add", path: "/confirmed_by/agent", value: "autopilot" }],
+    impact_summary: { goal_ids: ["goal-task-001"], criterion_ids: [], evidence_ids: [], requires_revalidation: true },
+    risk_summary: { level: "high", reasons: ["authority_boundary"] },
+    estimated_cost: { unit: "agent_turns", value: 1 },
+    alternatives: [],
+    decision_state: "pending",
+    created_at: "2026-08-28T00:05:00Z"
+  };
+  assert.throws(() => normalizeGoalChangeProposal(proposal), /host-owned/);
+});
