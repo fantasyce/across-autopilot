@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 
 import { buildEvidenceEnvelope } from "../src/evidence.js";
 import { buildGoalChangeProposal } from "../src/goal-proposals.js";
@@ -165,4 +166,20 @@ test("candidate planning and promotion reports preserve goal bindings without se
   assert.equal(report.goal_revision, contract.revision);
   assert.equal(report.safety.candidate_cannot_self_approve, true);
   assert.equal(report.safety.auto_release_allowed, false);
+});
+
+
+test("installed-style CLI Goal Contract probe returns the shared binding", () => {
+  const contract = goalContract();
+  const payload = JSON.parse(execFileSync(process.execPath, [
+    "src/cli.js",
+    "goal-contract",
+    "--contract-json",
+    JSON.stringify(contract),
+    "--json"
+  ], { encoding: "utf8" }));
+  assert.equal(payload.goal_id, contract.goal_id);
+  assert.equal(payload.goal_revision, contract.revision);
+  assert.deepEqual(payload.criterion_ids, contract.acceptance_criteria.map((item) => item.criterion_id).sort());
+  assert.match(payload.evidence_hash, /^[a-f0-9]{64}$/);
 });

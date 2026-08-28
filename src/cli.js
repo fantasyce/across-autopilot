@@ -22,6 +22,7 @@ import { buildReview, fetchSourceStatuses, loadSources, writeReview } from "./re
 import { assessCapabilityTrust, discoverExternalSkills, resolveCapabilities } from "./skill-radar.js";
 import { latestCandidate, loadState, recordCandidate, saveState } from "./state.js";
 import { AutopilotSupervisor } from "./supervisor.js";
+import { normalizeGoalContract, stableGoalHash } from "./goal-contract.js";
 import {
   buildWorkflowWorkerJobPlan,
   buildWorkflowExecutionPlan,
@@ -46,6 +47,18 @@ async function main(argv) {
   if (command === "status") {
     const parsed = parseArgs(rest);
     return printPayload(await loadState({ env: process.env }), parsed);
+  }
+
+  if (command === "goal-contract") {
+    const parsed = parseArgs(rest);
+    const normalized = normalizeGoalContract(JSON.parse(required(parsed["contract-json"], "--contract-json")));
+    return printPayload({
+      schema_version: "across-goal-contract-probe/1.0",
+      goal_id: normalized.goal_id,
+      goal_revision: normalized.revision,
+      criterion_ids: normalized.acceptance_criteria.map((criterion) => criterion.criterion_id).sort(),
+      evidence_hash: stableGoalHash(normalized)
+    }, parsed);
   }
 
   if (command === "gate" || command === "repo-push-gate") {
@@ -588,6 +601,7 @@ Commands:
   adapter pause --adapter-id id --json
   adapter resume --adapter-id id --json
   status --json
+  goal-contract --contract-json '{}' --json
   review [--fetch] [--output path] [--json]
   candidate-plan --goal text --target-product product --json
   create-candidate --goal text --target-product product --json
