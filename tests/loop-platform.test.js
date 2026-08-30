@@ -1479,6 +1479,14 @@ test("trigger idempotency conflicts instead of replaying an older Goal revision"
     () => queue.enqueue(spec, trigger, { goalContract: { goal_id: "goal-a", revision: 2 } }),
     /conflicts with a different Goal binding/
   );
+
+  const first = (await queue.list()).items[0];
+  await queue.claim(first.trigger_id);
+  await queue.complete(first.trigger_id, { status: "completed", run_id: "run-first" });
+  await assert.rejects(
+    () => queue.enqueue(spec, trigger, { goalContract: { goal_id: "goal-a", revision: 2 } }),
+    /conflicts with a different Goal binding/
+  );
 });
 
 test("trigger queue recovers an expired claimed item after a host interruption", async () => {

@@ -46,7 +46,15 @@ export class OrchestratorClient {
       context_files: spec.pack_config?.context_files || spec.model_policy?.context_files || [],
       focus: spec.pack_config?.focus || spec.model_policy?.focus || []
     };
-    if (goalBinding) metadata.goal_contract = structuredClone(goalBinding);
+    const goalExecutionContract = goalBinding ? {
+      schema_version: "across-goal-execution-contract/1.0",
+      goal_id: goalBinding.goal_id,
+      goal_revision: goalBinding.goal_revision,
+      task_id: goalBinding.task_id,
+      criterion_ids: [...goalBinding.criterion_ids],
+      input_fingerprint: goalBinding.input_fingerprint
+    } : null;
+    if (goalExecutionContract) metadata.goal_execution_contract = structuredClone(goalExecutionContract);
     try {
       const runTimeoutMs = orchestratorRunTimeoutMs(modelPolicy);
       const hostSocket = hostSocketPath(this.env);
@@ -56,7 +64,7 @@ export class OrchestratorClient {
           spec,
           run,
           metadata,
-          goalBinding,
+          goalExecutionContract,
           timeoutMs: runTimeoutMs,
           requestJson: this.hostRequest
         });
@@ -72,6 +80,7 @@ export class OrchestratorClient {
         String(spec.execute?.max_turns || 8),
         "--metadata-json",
         JSON.stringify(metadata),
+        ...(goalExecutionContract ? ["--goal-execution-contract-json", JSON.stringify(goalExecutionContract)] : []),
         "--json"
       ], { env: this.env, cwd: this.cwd, timeoutMs: runTimeoutMs });
       const loopId = started.loop_id;
@@ -110,14 +119,14 @@ export class OrchestratorClient {
   }
 }
 
-async function runLoopTaskViaHost({ socketPath, spec, run, metadata, goalBinding, timeoutMs, requestJson }) {
+async function runLoopTaskViaHost({ socketPath, spec, run, metadata, goalExecutionContract, timeoutMs, requestJson }) {
   const started = await requestJson(socketPath, "POST", "/api/orchestrator/loops", {
     goal: spec.description || spec.name,
     project_dir: run.sandbox,
     agent: "autopilot",
     max_turns: spec.execute?.max_turns || 8,
     metadata,
-    ...(goalBinding ? { goal_contract: goalBinding } : {})
+    ...(goalExecutionContract ? { goal_execution_contract: goalExecutionContract } : {})
   }, timeoutMs);
   const loopId = started.loop_id;
   if (!loopId) throw new Error("AAA Orchestrator host did not return a loop id");

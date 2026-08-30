@@ -802,21 +802,32 @@ function verifyReturnedGoalBinding(task, expected) {
   if (stableJson(actualCriteria) !== stableJson(expectedCriteria)) {
     throw new Error("Goal binding mismatch: criterion_ids");
   }
-  if (receipt.schema_version !== "across-worker-evidence/1.0") throw new Error("Goal binding mismatch: receipt schema");
+  if (!["across-worker-evidence/1.0", "across-orchestrator-goal-receipt/1.0"].includes(receipt.schema_version)) {
+    throw new Error("Goal binding mismatch: receipt schema");
+  }
   const unhashed = { ...receipt };
   delete unhashed.receipt_hash;
   const observedHash = createHash("sha256").update(JSON.stringify(sortCanonical(unhashed))).digest("hex");
-  if (!receipt.receipt_hash || receipt.receipt_hash !== observedHash) throw new Error("Goal binding mismatch: receipt hash");
-  if (receipt.terminal_state !== "completed") throw new Error("Goal binding mismatch: terminal state");
-  for (const field of ["job_id", "run_id", "lease_id"]) {
-    if (!String(receipt[field] || "").trim()) throw new Error(`Goal binding mismatch: ${field}`);
+  if (receipt.schema_version === "across-orchestrator-goal-receipt/1.0" && (!receipt.receipt_hash || receipt.receipt_hash !== observedHash)) {
+    throw new Error("Goal binding mismatch: receipt hash");
   }
-  if (!Number.isSafeInteger(receipt.attempt) || receipt.attempt < 1) throw new Error("Goal binding mismatch: attempt");
+  if (receipt.terminal_state !== "completed") throw new Error("Goal binding mismatch: terminal state");
   const authority = task?.goal_evidence_binding;
-  if (!authority || authority.trust_state !== "verified" || authority.lease_state !== "terminal_valid") {
+  const workerReceipt = receipt.schema_version === "across-worker-evidence/1.0";
+  const authorityStateValid = workerReceipt
+    ? authority?.lease_state === "terminal_valid" && authority?.authority === "across-orchestrator-worker-coordinator"
+    : authority?.execution_state === "terminal_valid" && authority?.authority === "across-orchestrator-loop-runtime";
+  if (!authority || authority.trust_state !== "verified" || !authorityStateValid) {
     throw new Error("Goal binding mismatch: evidence authority");
   }
-  for (const field of ["goal_id", "goal_revision", "task_id", "job_id", "run_id", "attempt", "lease_id", "input_fingerprint", "receipt_hash"]) {
+  const ownershipFields = workerReceipt
+    ? ["job_id", "run_id", "attempt", "lease_id"]
+    : ["orchestrator_task_id", "run_id"];
+  for (const field of ownershipFields) {
+    if (!String(receipt[field] ?? "").trim()) throw new Error(`Goal binding mismatch: ${field}`);
+  }
+  if (workerReceipt && (!Number.isSafeInteger(receipt.attempt) || receipt.attempt < 1)) throw new Error("Goal binding mismatch: attempt");
+  for (const field of ["goal_id", "goal_revision", "task_id", ...ownershipFields, "input_fingerprint", "receipt_hash"]) {
     const expectedValue = field === "receipt_hash" ? receipt.receipt_hash : receipt[field];
     if (authority[field] !== expectedValue) throw new Error(`Goal binding mismatch: authority ${field}`);
   }

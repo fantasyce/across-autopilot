@@ -73,7 +73,8 @@ function verifiedTask(binding, overrides = {}) {
     goal_evidence_binding: {
       ...binding, job_id: receipt.job_id, run_id: receipt.run_id, lease_id: receipt.lease_id,
       attempt: receipt.attempt, receipt_hash: receipt.receipt_hash,
-      trust_state: "verified", lease_state: "terminal_valid"
+      trust_state: "verified", lease_state: "terminal_valid",
+      authority: "across-orchestrator-worker-coordinator"
     },
     ...overrides
   };

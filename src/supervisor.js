@@ -772,6 +772,7 @@ export class AutopilotSupervisor {
       let action;
       const plannedGoalAction = goalPlan?.actions.find((item) => item.adapter === actionId);
       const goalBinding = plannedGoalAction?.criterion_ids?.length ? freezeGoalBinding({
+        schema_version: "across-goal-execution-contract/1.0",
         goal_id: goalPlan.goal_id,
         goal_revision: goalPlan.goal_revision,
         task_id: goalPlan.task_id,

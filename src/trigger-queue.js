@@ -27,7 +27,11 @@ export class TriggerQueue {
     const queue = await this.list({ now });
     const event = normalizeTriggerEvent(trigger, spec, now);
     const idempotencyKey = String(trigger.idempotency_key || event.idempotency_key || defaultIdempotencyKey(spec, event));
-    const existing = queue.items.find((item) => item.idempotency_key === idempotencyKey && ["pending", "claimed", "running"].includes(item.status));
+    const sameKey = queue.items.filter((item) => item.idempotency_key === idempotencyKey);
+    if (sameKey.some((item) => stableJson(item.goal_contract ?? null) !== stableJson(goalContract ?? null))) {
+      throw new Error("trigger idempotency key conflicts with a different Goal binding");
+    }
+    const existing = sameKey.find((item) => ["pending", "claimed", "running"].includes(item.status));
     if (existing) {
       if (stableJson(existing.goal_contract ?? null) !== stableJson(goalContract ?? null)) {
         throw new Error("trigger idempotency key conflicts with a different Goal binding");
