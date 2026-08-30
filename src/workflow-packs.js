@@ -447,7 +447,7 @@ export function buildWorkflowExecutionPlan({ packId, goal, projectId = null, liv
 function withGoalBinding(plan, goalContract, subtaskId) {
   if (!goalContract) return plan;
   const contract = normalizeGoalContract(goalContract);
-  const executableCriteria = contract.acceptance_criteria.filter((criterion) => criterion.review_policy !== "human");
+  const executableCriteria = contract.acceptance_criteria.filter((criterion) => criterion.required === true && criterion.review_policy !== "human");
   const criterionIds = executableCriteria.map((criterion) => criterion.criterion_id);
   const humanCriterionIds = contract.acceptance_criteria
     .filter((criterion) => criterion.review_policy === "human")

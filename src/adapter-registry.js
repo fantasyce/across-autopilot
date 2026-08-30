@@ -769,7 +769,7 @@ async function orchestratorDispatch({ spec, run, orchestratorClient, goalBinding
     });
   }
   const task = await orchestratorClient.runLoopTask({ spec, run, ...(goalBinding ? { goalBinding } : {}) });
-  if (goalBinding) verifyReturnedGoalBinding(task?.evidence_receipt, goalBinding);
+  if (goalBinding) verifyReturnedGoalBinding(task, goalBinding);
   const failed = task.status === "failed" || task.quality_status === "failed";
   const failureMessage = task.status_payload?.error
     || task.evidence_summary?.failure?.message
@@ -789,7 +789,8 @@ async function orchestratorDispatch({ spec, run, orchestratorClient, goalBinding
   };
 }
 
-function verifyReturnedGoalBinding(receipt, expected) {
+function verifyReturnedGoalBinding(task, expected) {
+  const receipt = task?.evidence_receipt;
   if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) {
     throw new Error("Goal binding mismatch: Orchestrator receipt is missing");
   }
@@ -801,6 +802,30 @@ function verifyReturnedGoalBinding(receipt, expected) {
   if (stableJson(actualCriteria) !== stableJson(expectedCriteria)) {
     throw new Error("Goal binding mismatch: criterion_ids");
   }
+  if (receipt.schema_version !== "across-worker-evidence/1.0") throw new Error("Goal binding mismatch: receipt schema");
+  const unhashed = { ...receipt };
+  delete unhashed.receipt_hash;
+  const observedHash = createHash("sha256").update(JSON.stringify(sortCanonical(unhashed))).digest("hex");
+  if (!receipt.receipt_hash || receipt.receipt_hash !== observedHash) throw new Error("Goal binding mismatch: receipt hash");
+  if (receipt.terminal_state !== "completed") throw new Error("Goal binding mismatch: terminal state");
+  for (const field of ["job_id", "run_id", "lease_id"]) {
+    if (!String(receipt[field] || "").trim()) throw new Error(`Goal binding mismatch: ${field}`);
+  }
+  if (!Number.isSafeInteger(receipt.attempt) || receipt.attempt < 1) throw new Error("Goal binding mismatch: attempt");
+  const authority = task?.goal_evidence_binding;
+  if (!authority || authority.trust_state !== "verified" || authority.lease_state !== "terminal_valid") {
+    throw new Error("Goal binding mismatch: evidence authority");
+  }
+  for (const field of ["goal_id", "goal_revision", "task_id", "job_id", "run_id", "attempt", "lease_id", "input_fingerprint", "receipt_hash"]) {
+    const expectedValue = field === "receipt_hash" ? receipt.receipt_hash : receipt[field];
+    if (authority[field] !== expectedValue) throw new Error(`Goal binding mismatch: authority ${field}`);
+  }
+}
+
+function sortCanonical(value) {
+  if (Array.isArray(value)) return value.map(sortCanonical);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortCanonical(value[key])]));
 }
 
 function qualityGateEvaluation({ spec, sources, actions }) {

@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 
 import { buildEvidenceEnvelope } from "../src/evidence.js";
 import { buildGoalChangeProposal } from "../src/goal-proposals.js";
@@ -55,6 +56,26 @@ function goalContract() {
     confirmed_by: "human:user",
     confirmed_at: "2026-08-28T00:00:00Z",
     created_at: "2026-08-28T00:00:00Z"
+  };
+}
+
+function verifiedTask(binding, overrides = {}) {
+  const receipt = {
+    schema_version: "across-worker-evidence/1.0", ...binding,
+    job_id: "job-goal", run_id: "run-goal", lease_id: "lease-goal", attempt: 1,
+    terminal_state: "completed", artifacts: [], required_evidence: ["test_suite"]
+  };
+  const sort = (value) => Array.isArray(value) ? value.map(sort) : value && typeof value === "object"
+    ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, sort(value[key])])) : value;
+  receipt.receipt_hash = createHash("sha256").update(JSON.stringify(sort(receipt))).digest("hex");
+  return {
+    task_id: binding.task_id, status: "completed", quality_status: "passed", evidence_receipt: receipt,
+    goal_evidence_binding: {
+      ...binding, job_id: receipt.job_id, run_id: receipt.run_id, lease_id: receipt.lease_id,
+      attempt: receipt.attempt, receipt_hash: receipt.receipt_hash,
+      trust_state: "verified", lease_state: "terminal_valid"
+    },
+    ...overrides
   };
 }
 
@@ -130,7 +151,7 @@ test("Workflow Pack plans use only generic goal and criterion bindings", () => {
   assert.equal(plan.goal_id, contract.goal_id);
   assert.equal(plan.goal_revision, contract.revision);
   assert.ok(plan.subtasks.every((subtask) => Array.isArray(subtask.criterion_ids)));
-  assert.deepEqual(plan.subtasks[0].criterion_ids.sort(), ["criterion-note", "criterion-tests"]);
+  assert.deepEqual(plan.subtasks[0].criterion_ids.sort(), ["criterion-tests"]);
   assert.ok(plan.host_decisions.some((decision) => decision.criterion_ids.includes("criterion-review")));
   assert.equal("scenario" in plan, false);
   assert.equal("simulation" in plan, false);
@@ -149,7 +170,8 @@ test("Worker Job plans bind executable criteria before dispatch", () => {
   assert.equal(plan.manifest.task_id, contract.task_id);
   assert.equal(plan.manifest.goal_id, contract.goal_id);
   assert.equal(plan.manifest.goal_revision, contract.revision);
-  assert.deepEqual(plan.manifest.criterion_ids.sort(), ["criterion-note", "criterion-tests"]);
+  assert.deepEqual(plan.manifest.criterion_ids.sort(), ["criterion-tests"]);
+  assert.deepEqual(plan.manifest.required_evidence, ["test_suite"]);
   assert.equal(plan.manifest.criterion_ids.includes("criterion-review"), false);
   assert.ok(plan.host_decisions.some((decision) => decision.criterion_ids.includes("criterion-review")));
 });
@@ -176,18 +198,7 @@ test("Orchestrator dispatch receives and verifies the immutable Goal binding", a
   const orchestratorClient = {
       async runLoopTask(payload) {
         dispatched = payload;
-        return {
-          task_id: "task-001",
-          status: "completed",
-          quality_status: "passed",
-          evidence_receipt: {
-            goal_id: binding.goal_id,
-            goal_revision: binding.goal_revision,
-            task_id: binding.task_id,
-            criterion_ids: [...binding.criterion_ids],
-            input_fingerprint: binding.input_fingerprint
-          }
-        };
+        return verifiedTask(binding);
       }
   };
   const registry = new AdapterRegistry({ orchestratorClient });
@@ -202,7 +213,7 @@ test("Orchestrator dispatch receives and verifies the immutable Goal binding", a
 
   const badOrchestratorClient = {
       async runLoopTask() {
-        return { status: "completed", quality_status: "passed", evidence_receipt: { ...binding, goal_revision: 3 } };
+        return verifiedTask({ ...binding, goal_revision: 3 });
       }
   };
   const badRegistry = new AdapterRegistry({ orchestratorClient: badOrchestratorClient });
@@ -288,7 +299,7 @@ test("public CLI and async paths preserve the governed Goal Contract", async () 
     "--json"
   ], { encoding: "utf8" }));
   assert.equal(cliPlan.manifest.goal_id, contract.goal_id);
-  assert.deepEqual(cliPlan.manifest.criterion_ids.sort(), ["criterion-note", "criterion-tests"]);
+  assert.deepEqual(cliPlan.manifest.criterion_ids.sort(), ["criterion-tests"]);
 
   const home = await mkdtemp(join(tmpdir(), "across-autopilot-goal-async-"));
   const store = new RunStore({ env: { ...process.env, ACROSS_HOME: home } });
