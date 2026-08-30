@@ -159,9 +159,13 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.5.4`. It is source-first and GitHub-first: hosts can
-install it from the `v0.5.4` tag as a managed Across plugin, and the npm package
+The prepared release candidate is `v0.6.0`. After publication from `origin/main`, hosts can
+install it from the `v0.6.0` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
+
+`v0.6.0` adds Goal-aware planning, immutable pending Goal proposals,
+criterion-bound evidence, and generic Workflow Pack bindings while preserving
+host confirmation and human promotion authority.
 
 `v0.5.4` adds durable trigger claim leases, recovery of expired claims,
 bounded preparation and execution retries, and reconciliation of runs whose

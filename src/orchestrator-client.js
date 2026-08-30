@@ -26,7 +26,7 @@ export class OrchestratorClient {
       || commandAvailable(this.command, ["across-orchestrator"], this.env);
   }
 
-  async runLoopTask({ spec, run }) {
+  async runLoopTask({ spec, run, goalBinding = null }) {
     const modelPolicy = modelPolicyFor(spec, this.env);
     const metadata = {
       autopilot: {
@@ -46,6 +46,14 @@ export class OrchestratorClient {
       context_files: spec.pack_config?.context_files || spec.model_policy?.context_files || [],
       focus: spec.pack_config?.focus || spec.model_policy?.focus || []
     };
+    const goalExecutionContract = goalBinding ? {
+      schema_version: "across-goal-execution-contract/1.0",
+      goal_id: goalBinding.goal_id,
+      goal_revision: goalBinding.goal_revision,
+      task_id: goalBinding.task_id,
+      criterion_ids: [...goalBinding.criterion_ids],
+      input_fingerprint: goalBinding.input_fingerprint
+    } : null;
     try {
       const runTimeoutMs = orchestratorRunTimeoutMs(modelPolicy);
       const hostSocket = hostSocketPath(this.env);
@@ -55,6 +63,7 @@ export class OrchestratorClient {
           spec,
           run,
           metadata,
+          goalExecutionContract,
           timeoutMs: runTimeoutMs,
           requestJson: this.hostRequest
         });
@@ -70,6 +79,7 @@ export class OrchestratorClient {
         String(spec.execute?.max_turns || 8),
         "--metadata-json",
         JSON.stringify(metadata),
+        ...(goalExecutionContract ? ["--goal-execution-contract-json", JSON.stringify(goalExecutionContract)] : []),
         "--json"
       ], { env: this.env, cwd: this.cwd, timeoutMs: runTimeoutMs });
       const loopId = started.loop_id;
@@ -93,7 +103,9 @@ export class OrchestratorClient {
         status_payload: status,
         evidence_summary: summary,
         event_count: Array.isArray(events) ? events.length : 0,
-        evidence_refs: [`orchestrator/${loopId}/evidence-summary`]
+        evidence_refs: [`orchestrator/${loopId}/evidence-summary`],
+        evidence_receipt: extractAuthorityProjection("evidence_receipt", completed, status, summary),
+        goal_evidence_binding: extractAuthorityProjection("goal_evidence_binding", completed, status, summary)
       };
     } catch (error) {
       throw new LoopFailure({
@@ -106,13 +118,14 @@ export class OrchestratorClient {
   }
 }
 
-async function runLoopTaskViaHost({ socketPath, spec, run, metadata, timeoutMs, requestJson }) {
+async function runLoopTaskViaHost({ socketPath, spec, run, metadata, goalExecutionContract, timeoutMs, requestJson }) {
   const started = await requestJson(socketPath, "POST", "/api/orchestrator/loops", {
     goal: spec.description || spec.name,
     project_dir: run.sandbox,
     agent: "autopilot",
     max_turns: spec.execute?.max_turns || 8,
-    metadata
+    metadata,
+    ...(goalExecutionContract ? { goal_execution_contract: goalExecutionContract } : {})
   }, timeoutMs);
   const loopId = started.loop_id;
   if (!loopId) throw new Error("AAA Orchestrator host did not return a loop id");
@@ -133,8 +146,21 @@ async function runLoopTaskViaHost({ socketPath, spec, run, metadata, timeoutMs, 
     status_payload: status,
     evidence_summary: summary,
     event_count: Array.isArray(events) ? events.length : 0,
-    evidence_refs: [`orchestrator/${loopId}/evidence-summary`]
+    evidence_refs: [`orchestrator/${loopId}/evidence-summary`],
+    evidence_receipt: extractAuthorityProjection("evidence_receipt", completed, status, summary),
+    goal_evidence_binding: extractAuthorityProjection("goal_evidence_binding", completed, status, summary)
   };
+}
+
+function extractAuthorityProjection(field, ...sources) {
+  for (const source of sources) {
+    if (!source || typeof source !== "object") continue;
+    if (source[field] && typeof source[field] === "object") return source[field];
+    for (const container of ["job", "result", "evidence", "authority"]) {
+      if (source[container]?.[field] && typeof source[container][field] === "object") return source[container][field];
+    }
+  }
+  return null;
 }
 
 function hostSocketPath(env) {

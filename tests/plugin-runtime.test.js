@@ -84,8 +84,11 @@ test("OrchestratorClient uses the AAA private host socket when available", async
   const home = await mkdtemp(join(tmpdir(), "across-autopilot-host-socket-"));
   const socketPath = join(home, "aaa.sock");
   const requests = [];
-  const hostRequest = async (_socketPath, method, path) => {
-    requests.push(`${method} ${path}`);
+  const goalBinding = { goal_id: "goal-host", goal_revision: 2, task_id: "task-host", criterion_ids: ["criterion-host"], input_fingerprint: "a".repeat(64) };
+  const receipt = { schema_version: "across-worker-evidence/1.0", ...goalBinding, receipt_hash: "projected" };
+  const authority = { ...goalBinding, receipt_hash: "projected", trust_state: "verified", lease_state: "terminal_valid" };
+  const hostRequest = async (_socketPath, method, path, payload) => {
+    requests.push({ method, path, payload });
     if (method === "POST" && path === "/api/orchestrator/loops") {
       return { loop_id: "loop-host-1", status: "pending" };
     }
@@ -93,7 +96,7 @@ test("OrchestratorClient uses the AAA private host socket when available", async
       return { loop_id: "loop-host-1", status: "completed", metadata: { autopilot: { run_id: "run-host-1" } } };
     }
     if (path === "/api/orchestrator/loops/loop-host-1/evidence-summary") {
-      return { status: "passed", quality_status: "passed" };
+      return { status: "passed", quality_status: "passed", evidence_receipt: receipt, goal_evidence_binding: authority };
     }
     if (path === "/api/orchestrator/loops/loop-host-1/events") return [{ sequence: 1 }];
     return { loop_id: "loop-host-1", status: "completed", metadata: { autopilot: { run_id: "run-host-1" } } };
@@ -116,20 +119,23 @@ test("OrchestratorClient uses the AAA private host socket when available", async
       execute: { max_turns: 2 },
       evidence_contract: { schema_version: "across-evidence/1.0" }
     },
-    run: { run_id: "run-host-1", sandbox: home }
+    run: { run_id: "run-host-1", sandbox: home },
+    goalBinding
   });
 
   assert.equal(result.loop_id, "loop-host-1");
   assert.equal(result.quality_status, "passed");
   assert.equal(result.metadata_reflected, true);
   assert.equal(result.event_count, 1);
-  assert.deepEqual(requests, [
-    "POST /api/orchestrator/loops",
-    "POST /api/orchestrator/loops/loop-host-1/run",
-    "GET /api/orchestrator/loops/loop-host-1",
-    "GET /api/orchestrator/loops/loop-host-1/evidence-summary",
+  assert.deepEqual(requests.map(({ method, path }) => `${method} ${path}`), [
+    "POST /api/orchestrator/loops", "POST /api/orchestrator/loops/loop-host-1/run",
+    "GET /api/orchestrator/loops/loop-host-1", "GET /api/orchestrator/loops/loop-host-1/evidence-summary",
     "GET /api/orchestrator/loops/loop-host-1/events"
   ]);
+  assert.deepEqual(requests[0].payload.goal_execution_contract, { schema_version: "across-goal-execution-contract/1.0", ...goalBinding });
+  assert.equal(Object.hasOwn(requests[0].payload.metadata, "goal_execution_contract"), false);
+  assert.deepEqual(result.evidence_receipt, receipt);
+  assert.deepEqual(result.goal_evidence_binding, authority);
 });
 
 test("plugin manifest exposes Autopilot host contract", async () => {

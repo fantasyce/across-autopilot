@@ -1,7 +1,12 @@
+import { normalizeGoalContract } from "./goal-contract.js";
+
+
 export function buildCandidatePlan(options = {}) {
   const goal = normalizeText(options.goal || "Review Across ecosystem improvement opportunities");
   const targetProduct = normalizeProduct(options.targetProduct || options.target_product || "across-autopilot");
   const risk = inferRisk(goal, targetProduct);
+  const suppliedGoalContract = options.goalContract || options.goal_contract || null;
+  const goalContract = suppliedGoalContract ? normalizeGoalContract(suppliedGoalContract) : null;
   return {
     schema_version: "across-autopilot-candidate-plan/1.0",
     goal,
@@ -9,6 +14,11 @@ export function buildCandidatePlan(options = {}) {
     proposed_branch_prefix: `autopilot/${slugify(targetProduct)}-${slugify(goal).slice(0, 40)}`,
     autonomy_level: risk === "low" ? 1 : 0,
     risk,
+    ...(goalContract ? {
+      goal_id: goalContract.goal_id,
+      goal_revision: goalContract.revision,
+      criterion_ids: (goalContract.acceptance_criteria || []).map((criterion) => criterion.criterion_id)
+    } : {}),
     required_owner: ownerForProduct(targetProduct),
     execution: {
       engine: "across-orchestrator",
@@ -87,6 +97,11 @@ export function buildPromotionReport(candidate, stableSlot = {}) {
     candidate_id: evaluated.candidate_id,
     target_product: evaluated.plan?.target_product,
     target_version: evaluated.target_version,
+    ...(evaluated.plan?.goal_id ? {
+      goal_id: evaluated.plan.goal_id,
+      goal_revision: evaluated.plan.goal_revision,
+      criterion_ids: [...(evaluated.plan.criterion_ids || [])]
+    } : {}),
     readiness: evaluated.promotion.readiness,
     recommendation: evaluated.promotion.recommendation,
     stable_slot: stableSlot,
@@ -149,4 +164,3 @@ function slugify(value) {
 function compactTimestamp(date) {
   return date.toISOString().replace(/[-:]/g, "").replace(/\..+/, "Z");
 }
-

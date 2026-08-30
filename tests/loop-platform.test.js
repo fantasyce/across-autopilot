@@ -1469,6 +1469,26 @@ test("trigger queue deduplicates payloads and dispatches through the supervisor"
   assert.equal(completed.run_id, dispatched.run.run_id);
 });
 
+test("trigger idempotency conflicts instead of replaying an older Goal revision", async () => {
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-trigger-goal-conflict-"));
+  const queue = new TriggerQueue({ env: { ...process.env, ACROSS_HOME: home } });
+  const spec = minimalSpec({ id: "goal-trigger-conflict", actions: ["queue_noop_action"], outputs: ["noop_output"] });
+  const trigger = { type: "webhook", source: "test", idempotency_key: "same-key", payload: {} };
+  await queue.enqueue(spec, trigger, { goalContract: { goal_id: "goal-a", revision: 1 } });
+  await assert.rejects(
+    () => queue.enqueue(spec, trigger, { goalContract: { goal_id: "goal-a", revision: 2 } }),
+    /conflicts with a different Goal binding/
+  );
+
+  const first = (await queue.list()).items[0];
+  await queue.claim(first.trigger_id);
+  await queue.complete(first.trigger_id, { status: "completed", run_id: "run-first" });
+  await assert.rejects(
+    () => queue.enqueue(spec, trigger, { goalContract: { goal_id: "goal-a", revision: 2 } }),
+    /conflicts with a different Goal binding/
+  );
+});
+
 test("trigger queue recovers an expired claimed item after a host interruption", async () => {
   const home = await mkdtemp(join(tmpdir(), "across-autopilot-trigger-recovery-"));
   const queue = new TriggerQueue({

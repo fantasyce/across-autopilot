@@ -3,16 +3,18 @@ import { EVIDENCE_SCHEMA, normalizeRuntimePolicy } from "./loop-spec.js";
 import { stableJson } from "./json-utils.js";
 import { buildRoleEvidence } from "./roles.js";
 import { buildPushReceipt, normalizeQualityFindings } from "./findings.js";
+import { normalizeGoalContract, stableGoalHash } from "./goal-contract.js";
 
 export const EVIDENCE_GRAPH_SCHEMA = "across-evidence-graph/1.0";
 
-export function buildEvidenceEnvelope({ spec, run, sources = [], actions = [], gates = [], outputs = [], memory = {}, risks = [], audit = [], failure = null }) {
+export function buildEvidenceEnvelope({ spec, run, sources = [], actions = [], gates = [], outputs = [], memory = {}, risks = [], audit = [], failure = null, goalContract = null }) {
   const orchestratorTasks = actions
     .filter((action) => action.adapter === "orchestrator_task_dispatch")
     .flatMap((action) => action.result?.task ? [action.result.task] : []);
   const candidate = candidateEvidence(actions);
   const runtimePolicy = normalizeRuntimePolicy(spec);
   const runtimeBudget = buildRuntimeBudgetEvidence({ policy: runtimePolicy, actions, run, failure });
+  const goalClaims = buildGoalClaims(goalContract, actions);
   const envelope = {
     schema_version: EVIDENCE_SCHEMA,
     run_id: run.run_id,
@@ -51,6 +53,7 @@ export function buildEvidenceEnvelope({ spec, run, sources = [], actions = [], g
     failure,
     audit
   };
+  if (goalClaims) envelope.goal_claims = goalClaims;
   const evidenceGraph = buildEvidenceGraph(envelope);
   const envelopeWithGraph = {
     ...envelope,
@@ -59,6 +62,25 @@ export function buildEvidenceEnvelope({ spec, run, sources = [], actions = [], g
   return {
     ...envelopeWithGraph,
     integrity: buildEvidenceIntegrity(envelopeWithGraph)
+  };
+}
+
+function buildGoalClaims(goalContract, actions) {
+  if (!goalContract) return null;
+  const contract = normalizeGoalContract(goalContract);
+  return {
+    schema_version: "across-goal-evidence-claims/1.0",
+    goal_id: contract.goal_id,
+    goal_revision: contract.revision,
+    input_fingerprint: stableGoalHash(contract),
+    criterion_claims: (actions || [])
+      .filter((action) => Array.isArray(action.criterion_ids) && action.criterion_ids.length)
+      .map((action) => ({
+        action_id: action.id || action.adapter || null,
+        criterion_ids: [...action.criterion_ids],
+        claimed_status: action.status || "unknown",
+        evidence_refs: [...(action.outputs || [])]
+      }))
   };
 }
 

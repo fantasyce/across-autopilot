@@ -760,7 +760,7 @@ function promotionReportGeneration({ spec, actions }) {
   };
 }
 
-async function orchestratorDispatch({ spec, run, orchestratorClient }) {
+async function orchestratorDispatch({ spec, run, orchestratorClient, goalBinding = null }) {
   if (!orchestratorClient) {
     throw new LoopFailure({
       code: FAILURE_CODES.ORCHESTRATOR_SUBMIT_FAILED,
@@ -768,7 +768,8 @@ async function orchestratorDispatch({ spec, run, orchestratorClient }) {
       message: "Orchestrator client is not configured."
     });
   }
-  const task = await orchestratorClient.runLoopTask({ spec, run });
+  const task = await orchestratorClient.runLoopTask({ spec, run, ...(goalBinding ? { goalBinding } : {}) });
+  if (goalBinding) verifyReturnedGoalBinding(task, goalBinding);
   const failed = task.status === "failed" || task.quality_status === "failed";
   const failureMessage = task.status_payload?.error
     || task.evidence_summary?.failure?.message
@@ -786,6 +787,59 @@ async function orchestratorDispatch({ spec, run, orchestratorClient }) {
       }
       : null
   };
+}
+
+function verifyReturnedGoalBinding(task, expected) {
+  const receipt = task?.evidence_receipt;
+  if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) {
+    throw new Error("Goal binding mismatch: Orchestrator receipt is missing");
+  }
+  for (const field of ["goal_id", "goal_revision", "task_id", "input_fingerprint"]) {
+    if (receipt[field] !== expected[field]) throw new Error(`Goal binding mismatch: ${field}`);
+  }
+  const actualCriteria = [...new Set(asArray(receipt.criterion_ids).map(String))].sort();
+  const expectedCriteria = [...new Set(asArray(expected.criterion_ids).map(String))].sort();
+  if (stableJson(actualCriteria) !== stableJson(expectedCriteria)) {
+    throw new Error("Goal binding mismatch: criterion_ids");
+  }
+  if (!["across-worker-evidence/1.0", "across-orchestrator-goal-receipt/1.0"].includes(receipt.schema_version)) {
+    throw new Error("Goal binding mismatch: receipt schema");
+  }
+  const unhashed = { ...receipt };
+  delete unhashed.receipt_hash;
+  const observedHash = createHash("sha256").update(JSON.stringify(sortCanonical(unhashed))).digest("hex");
+  if (receipt.schema_version === "across-orchestrator-goal-receipt/1.0" && (!receipt.receipt_hash || receipt.receipt_hash !== observedHash)) {
+    throw new Error("Goal binding mismatch: receipt hash");
+  }
+  if (receipt.terminal_state !== "completed") throw new Error("Goal binding mismatch: terminal state");
+  const authority = task?.goal_evidence_binding;
+  const workerReceipt = receipt.schema_version === "across-worker-evidence/1.0";
+  const authorityStateValid = workerReceipt
+    ? authority?.lease_state === "terminal_valid" && authority?.authority === "across-orchestrator-worker-coordinator"
+    : authority?.execution_state === "terminal_valid" && authority?.authority === "across-orchestrator-loop-runtime";
+  const authorityTrustValid = workerReceipt
+    ? authority?.trust_state === "verified"
+    : authority?.trust_state === "needs_review" && receipt.quality_status === "needs_review";
+  if (!authority || !authorityTrustValid || !authorityStateValid) {
+    throw new Error("Goal binding mismatch: evidence authority");
+  }
+  const ownershipFields = workerReceipt
+    ? ["job_id", "run_id", "attempt", "lease_id"]
+    : ["orchestrator_task_id", "run_id"];
+  for (const field of ownershipFields) {
+    if (!String(receipt[field] ?? "").trim()) throw new Error(`Goal binding mismatch: ${field}`);
+  }
+  if (workerReceipt && (!Number.isSafeInteger(receipt.attempt) || receipt.attempt < 1)) throw new Error("Goal binding mismatch: attempt");
+  for (const field of ["goal_id", "goal_revision", "task_id", ...ownershipFields, "input_fingerprint", "receipt_hash"]) {
+    const expectedValue = field === "receipt_hash" ? receipt.receipt_hash : receipt[field];
+    if (authority[field] !== expectedValue) throw new Error(`Goal binding mismatch: authority ${field}`);
+  }
+}
+
+function sortCanonical(value) {
+  if (Array.isArray(value)) return value.map(sortCanonical);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortCanonical(value[key])]));
 }
 
 function qualityGateEvaluation({ spec, sources, actions }) {
