@@ -54,7 +54,6 @@ export class OrchestratorClient {
       criterion_ids: [...goalBinding.criterion_ids],
       input_fingerprint: goalBinding.input_fingerprint
     } : null;
-    if (goalExecutionContract) metadata.goal_execution_contract = structuredClone(goalExecutionContract);
     try {
       const runTimeoutMs = orchestratorRunTimeoutMs(modelPolicy);
       const hostSocket = hostSocketPath(this.env);

@@ -133,7 +133,7 @@ test("OrchestratorClient uses the AAA private host socket when available", async
     "GET /api/orchestrator/loops/loop-host-1/events"
   ]);
   assert.deepEqual(requests[0].payload.goal_execution_contract, { schema_version: "across-goal-execution-contract/1.0", ...goalBinding });
-  assert.deepEqual(requests[0].payload.metadata.goal_execution_contract, { schema_version: "across-goal-execution-contract/1.0", ...goalBinding });
+  assert.equal(Object.hasOwn(requests[0].payload.metadata, "goal_execution_contract"), false);
   assert.deepEqual(result.evidence_receipt, receipt);
   assert.deepEqual(result.goal_evidence_binding, authority);
 });

@@ -727,8 +727,11 @@ export class AutopilotSupervisor {
     const plannedActions = actionIds.map((adapter) => ({ adapter, criterion_ids: [] }));
     const hostDecisions = [];
     const executableCriteria = contract.acceptance_criteria.filter((criterion) => criterion.required === true && criterion.review_policy !== "human");
+    const orchestratorAction = plannedActions.find((action) => action.adapter === "orchestrator_task_dispatch");
     executableCriteria.forEach((criterion, index) => {
-      if (plannedActions.length) {
+      if (orchestratorAction) {
+        orchestratorAction.criterion_ids.push(criterion.criterion_id);
+      } else if (plannedActions.length) {
         plannedActions[index % plannedActions.length].criterion_ids.push(criterion.criterion_id);
       } else {
         hostDecisions.push({ kind: "execution_planning_required", criterion_ids: [criterion.criterion_id] });

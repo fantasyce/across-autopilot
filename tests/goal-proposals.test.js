@@ -106,7 +106,7 @@ test("goal-aware plans bind every required criterion without changing the contra
   const before = structuredClone(contract);
   const plan = supervisor.buildPlan({
     id: "goal-aware",
-    used_adapters: { actions: ["manifest_inspection", "quality_gate_evaluation"] },
+    used_adapters: { actions: ["manifest_inspection", "orchestrator_task_dispatch", "quality_gate_evaluation"] },
     outputs: [{ id: "report" }]
   }, [], [], contract);
 
@@ -122,6 +122,10 @@ test("goal-aware plans bind every required criterion without changing the contra
   assert.ok(covered.has("criterion-review"));
   assert.equal(covered.has("criterion-note"), false);
   assert.ok(plan.host_decisions.some((decision) => decision.criterion_ids.includes("criterion-review")));
+  assert.deepEqual(
+    plan.actions.find((action) => action.adapter === "orchestrator_task_dispatch").criterion_ids,
+    ["criterion-tests"]
+  );
 });
 
 
