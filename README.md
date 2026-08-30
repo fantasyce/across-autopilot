@@ -159,7 +159,7 @@ Agent-readable entrypoints:
 
 ## Current Loop Engineering Platform
 
-The current release is `v0.6.0`. It is source-first and GitHub-first: hosts can
+The prepared release candidate is `v0.6.0`. After publication from `origin/main`, hosts can
 install it from the `v0.6.0` tag as a managed Across plugin, and the npm package
 metadata is ready for local development and future registry publication.
 
