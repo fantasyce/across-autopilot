@@ -52,12 +52,18 @@ function sortedJsonValue(value) {
   if (value && typeof value === "object") {
     return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortedJsonValue(value[key])]));
   }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || !Number.isSafeInteger(value)) {
+      throw new TypeError("Goal Contract numbers must be finite safe integers");
+    }
+    return Object.is(value, -0) ? 0 : value;
+  }
   return value;
 }
 
 
 function cloneJson(value) {
-  return JSON.parse(JSON.stringify(value));
+  return JSON.parse(JSON.stringify(sortedJsonValue(value)));
 }
 
 
@@ -106,6 +112,10 @@ export function normalizeGoalContract(value = {}) {
   requiredText(contract.source, "source");
   if (Boolean(contract.confirmed_by) !== Boolean(contract.confirmed_at)) {
     throw new TypeError("confirmed_by and confirmed_at must be supplied together");
+  }
+  if (contract.confirmed_by !== undefined || contract.confirmed_at !== undefined) {
+    requiredText(contract.confirmed_by, "confirmed_by");
+    requiredText(contract.confirmed_at, "confirmed_at");
   }
   requiredText(contract.created_at, "created_at");
   stableGoalHash(contract);

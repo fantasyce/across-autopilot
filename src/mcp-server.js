@@ -220,8 +220,24 @@ async function handleLine(line) {
           { name: "get_autopilot_status", description: "Return Across Autopilot stable/candidate status." },
           { name: "validate_loop_spec", description: "Validate a LoopSpec." },
           { name: "dry_run_loop", description: "Dry run a LoopSpec without executing adapters." },
-          { name: "run_loop", description: "Run a LoopSpec through the Autopilot supervisor." },
-          { name: "start_async_loop_task", description: "Create an across-async-task/1.0 projection backed by the Autopilot run-store." },
+          {
+            name: "run_loop",
+            description: "Run a LoopSpec through the Autopilot supervisor with an optional governed Goal Contract.",
+            inputSchema: {
+              type: "object",
+              properties: { spec: {}, goal_contract: { type: "object" } },
+              required: ["spec"]
+            }
+          },
+          {
+            name: "start_async_loop_task",
+            description: "Create an across-async-task/1.0 projection and persist its optional governed Goal Contract.",
+            inputSchema: {
+              type: "object",
+              properties: { spec: {}, trigger: { type: "string" }, spawn: { type: "boolean" }, goal_contract: { type: "object" } },
+              required: ["spec"]
+            }
+          },
           { name: "get_async_loop_task", description: "Poll an across-async-task/1.0 projection by task id or run id." },
           {
             name: "validate_agent_plugin",
@@ -271,7 +287,15 @@ async function handleLine(line) {
               required: ["initial_command"]
             }
           },
-          { name: "enqueue_loop_trigger", description: "Persist a replayable trigger for a LoopSpec with idempotency." },
+          {
+            name: "enqueue_loop_trigger",
+            description: "Queue a replayable LoopSpec trigger with an optional governed Goal Contract.",
+            inputSchema: {
+              type: "object",
+              properties: { spec: {}, goal_contract: { type: "object" }, type: { type: "string" }, source: { type: "string" } },
+              required: ["spec"]
+            }
+          },
           { name: "get_loop_trigger_queue", description: "Return the durable Autopilot trigger queue." },
           { name: "run_next_loop_trigger", description: "Claim and execute one queued trigger." },
           { name: "get_loop_run_status", description: "Get loop run status." },
@@ -339,8 +363,8 @@ async function handleLine(line) {
       }
       if (name === "validate_loop_spec") return respondText(id, await supervisor.validateSpec(required(args.spec)));
       if (name === "dry_run_loop") return respondText(id, await supervisor.dryRun(required(args.spec)));
-      if (name === "run_loop") return respondText(id, await supervisor.run(required(args.spec)));
-      if (name === "start_async_loop_task") return respondText(id, await supervisor.startAsyncTask(required(args.spec), { trigger: args.trigger || "mcp", spawn: args.spawn !== false }));
+      if (name === "run_loop") return respondText(id, await supervisor.run(required(args.spec), { goalContract: args.goal_contract || args.goalContract || null }));
+      if (name === "start_async_loop_task") return respondText(id, await supervisor.startAsyncTask(required(args.spec), { trigger: args.trigger || "mcp", spawn: args.spawn !== false, goalContract: args.goal_contract || args.goalContract || null }));
       if (name === "get_async_loop_task") return respondText(id, await supervisor.taskStatus(required(args.task_id || args.run_id)));
       if (name === "validate_agent_plugin") return respondText(id, normalizeAgentPluginManifest(await loadAgentPluginManifest(args)));
       if (name === "plan_agent_plugin_run") {
@@ -360,7 +384,7 @@ async function handleLine(line) {
         idempotency_key: args.idempotency_key,
         not_before: args.not_before,
         replay_hint: args.replay_hint
-      }));
+      }, { goalContract: args.goal_contract || args.goalContract || null }));
       if (name === "get_loop_trigger_queue") return respondText(id, await supervisor.triggerQueueStatus());
       if (name === "run_next_loop_trigger") return respondText(id, await supervisor.runQueuedTrigger(args.trigger_id || null));
       if (name === "get_loop_run_status") return respondText(id, await supervisor.status(required(args.run_id)));

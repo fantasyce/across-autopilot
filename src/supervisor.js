@@ -104,6 +104,9 @@ export class AutopilotSupervisor {
       spec = options.spec || applyRuntimeModelOverrides(validation.migration.spec, options.modelOverrides);
       await this.assertNotPaused(spec);
       run = options.preparedRun || await this.store.createRun(spec, { trigger: options.trigger || "manual" });
+      if (goalContract && !run.goal_contract) {
+        run = await this.store.updateRun(run.run_id, { goal_contract: goalContract });
+      }
       const capabilityPreflight = this.capabilityPreflight(spec);
       if (!options.preparedRun && validation.migration.changed_paths.length) {
         await this.store.audit(run.run_id, spec.id, "spec_migrated", "LoopSpec migrated.", validation.migration);
@@ -222,6 +225,7 @@ export class AutopilotSupervisor {
     const spec = applyRuntimeModelOverrides(validation.migration.spec, options.modelOverrides);
     await this.assertNotPaused(spec);
     const run = await this.store.createRun(spec, { trigger: options.trigger || "manual" });
+    const goalContract = options.goalContract ? normalizeGoalContract(options.goalContract) : null;
     const task = asyncTaskEnvelope(run, {
       status: "queued",
       state: "async_queued",
@@ -230,7 +234,8 @@ export class AutopilotSupervisor {
     });
     await this.store.updateRun(run.run_id, {
       state: "async_queued",
-      async_task: task
+      async_task: task,
+      goal_contract: goalContract
     });
     await this.store.audit(run.run_id, spec.id, "async_task_created", "Async task created.", task);
     if (options.spawn !== false) {
@@ -278,7 +283,13 @@ export class AutopilotSupervisor {
         spec
       }
     };
-    const result = await this.run(spec, { preparedRun, spec, validation, trigger: preparedRun.trigger_event || preparedRun.trigger || "async-task" });
+    const result = await this.run(spec, {
+      preparedRun,
+      spec,
+      validation,
+      trigger: preparedRun.trigger_event || preparedRun.trigger || "async-task",
+      goalContract: preparedRun.goal_contract || null
+    });
     const finalTask = asyncTaskEnvelope(result.run, {
       status: result.run.status === "completed" ? "completed" : "failed",
       state: result.run.state,
@@ -300,7 +311,8 @@ export class AutopilotSupervisor {
     const validation = await this.validateSpec(pathOrId);
     const spec = validation.migration.spec;
     await this.assertNotPaused(spec);
-    return this.triggerQueue.enqueue(spec, trigger, options);
+    const goalContract = options.goalContract ? normalizeGoalContract(options.goalContract) : null;
+    return this.triggerQueue.enqueue(spec, trigger, { ...options, goalContract });
   }
 
   async triggerQueueStatus() {
@@ -376,7 +388,13 @@ export class AutopilotSupervisor {
       const spec = validation.migration.spec;
       const preparedRun = await this.store.createRun(spec, { trigger: item.trigger_event });
       await this.triggerQueue.attachRun(item.trigger_id, preparedRun.run_id);
-      const result = await this.run(spec, { trigger: item.trigger_event, validation, spec, preparedRun });
+      const result = await this.run(spec, {
+        trigger: item.trigger_event,
+        validation,
+        spec,
+        preparedRun,
+        goalContract: item.goal_contract || null
+      });
       const triggerStatus = result.run.status === "completed" ? "completed" : "failed";
       const platformSelfRepair = triggerStatus === "failed"
         ? await this.maybeEnqueuePlatformSelfRepair({
@@ -511,7 +529,7 @@ export class AutopilotSupervisor {
       });
     }
     const spec = await this.store.loadSpec(runId);
-    return this.run(spec, { trigger: "retry" });
+    return this.run(spec, { trigger: "retry", goalContract: run.goal_contract || null });
   }
 
   async listRuns() {
@@ -723,6 +741,7 @@ export class AutopilotSupervisor {
       ...base,
       goal_id: contract.goal_id,
       goal_revision: contract.revision,
+      task_id: contract.task_id,
       input_fingerprint: stableGoalHash(contract),
       actions: plannedActions,
       host_decisions: hostDecisions
@@ -751,6 +770,14 @@ export class AutopilotSupervisor {
         goalContract
       });
       let action;
+      const plannedGoalAction = goalPlan?.actions.find((item) => item.adapter === actionId);
+      const goalBinding = plannedGoalAction?.criterion_ids?.length ? freezeGoalBinding({
+        goal_id: goalPlan.goal_id,
+        goal_revision: goalPlan.goal_revision,
+        task_id: goalPlan.task_id,
+        criterion_ids: plannedGoalAction.criterion_ids,
+        input_fingerprint: goalPlan.input_fingerprint
+      }) : null;
       try {
         action = await withRuntimeTimeout(adapter.run({
           spec,
@@ -759,6 +786,7 @@ export class AutopilotSupervisor {
           actions,
           gates,
           recalledMemory,
+          goalBinding,
           orchestratorClient: this.orchestratorClient,
           contextClient: this.contextClient
         }), runtimeTimeoutForAction(runtimeBudget, actionId), actionId);
@@ -1089,6 +1117,12 @@ export class AutopilotSupervisor {
     }
     return outputs;
   }
+}
+
+
+function freezeGoalBinding(binding) {
+  const criterionIds = Object.freeze([...(binding.criterion_ids || [])]);
+  return Object.freeze({ ...binding, criterion_ids: criterionIds });
 }
 
 function collectOrchestratorTaskIds(actions) {

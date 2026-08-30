@@ -1,12 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { buildEvidenceEnvelope } from "../src/evidence.js";
 import { buildGoalChangeProposal } from "../src/goal-proposals.js";
 import { AutopilotSupervisor } from "../src/supervisor.js";
-import { buildWorkflowExecutionPlan } from "../src/workflow-packs.js";
+import { AdapterRegistry } from "../src/adapter-registry.js";
+import { buildWorkflowExecutionPlan, buildWorkflowWorkerJobPlan } from "../src/workflow-packs.js";
 import { buildCandidatePlan, buildPromotionReport, createCandidate } from "../src/candidates.js";
+import { RunStore } from "../src/run-store.js";
 
 
 function goalContract() {
@@ -125,8 +130,89 @@ test("Workflow Pack plans use only generic goal and criterion bindings", () => {
   assert.equal(plan.goal_id, contract.goal_id);
   assert.equal(plan.goal_revision, contract.revision);
   assert.ok(plan.subtasks.every((subtask) => Array.isArray(subtask.criterion_ids)));
+  assert.deepEqual(plan.subtasks[0].criterion_ids.sort(), ["criterion-note", "criterion-tests"]);
+  assert.ok(plan.host_decisions.some((decision) => decision.criterion_ids.includes("criterion-review")));
   assert.equal("scenario" in plan, false);
   assert.equal("simulation" in plan, false);
+});
+
+
+test("Worker Job plans bind executable criteria before dispatch", () => {
+  const contract = goalContract();
+  const plan = buildWorkflowWorkerJobPlan({
+    packId: "scenario-simulation",
+    goal: contract.statement,
+    projectId: "project-worker-goal",
+    goalContract: contract,
+    liveModel: false
+  });
+  assert.equal(plan.manifest.task_id, contract.task_id);
+  assert.equal(plan.manifest.goal_id, contract.goal_id);
+  assert.equal(plan.manifest.goal_revision, contract.revision);
+  assert.deepEqual(plan.manifest.criterion_ids.sort(), ["criterion-note", "criterion-tests"]);
+  assert.equal(plan.manifest.criterion_ids.includes("criterion-review"), false);
+  assert.ok(plan.host_decisions.some((decision) => decision.criterion_ids.includes("criterion-review")));
+});
+
+
+test("Goal hashes reject fractional and non-finite numbers consistently", async () => {
+  const { stableGoalHash } = await import("../src/goal-contract.js");
+  assert.throws(() => stableGoalHash({ value: 1e-7 }), /integer/);
+  assert.throws(() => stableGoalHash({ value: Number.NaN }), /integer/);
+  assert.equal(stableGoalHash({ value: 1.0 }), stableGoalHash({ value: 1 }));
+  assert.equal(stableGoalHash({ value: -0 }), stableGoalHash({ value: 0 }));
+});
+
+
+test("Orchestrator dispatch receives and verifies the immutable Goal binding", async () => {
+  let dispatched = null;
+  const binding = Object.freeze({
+    goal_id: "goal-task-001",
+    goal_revision: 4,
+    task_id: "task-001",
+    criterion_ids: Object.freeze(["criterion-tests"]),
+    input_fingerprint: "a".repeat(64)
+  });
+  const orchestratorClient = {
+      async runLoopTask(payload) {
+        dispatched = payload;
+        return {
+          task_id: "task-001",
+          status: "completed",
+          quality_status: "passed",
+          evidence_receipt: {
+            goal_id: binding.goal_id,
+            goal_revision: binding.goal_revision,
+            task_id: binding.task_id,
+            criterion_ids: [...binding.criterion_ids],
+            input_fingerprint: binding.input_fingerprint
+          }
+        };
+      }
+  };
+  const registry = new AdapterRegistry({ orchestratorClient });
+  const action = await registry.getAction("orchestrator_task_dispatch").run({
+    spec: { id: "goal-dispatch" },
+    run: { run_id: "run-goal-dispatch" },
+    goalBinding: binding,
+    orchestratorClient
+  });
+  assert.deepEqual(dispatched.goalBinding, binding);
+  assert.equal(action.status, "passed");
+
+  const badOrchestratorClient = {
+      async runLoopTask() {
+        return { status: "completed", quality_status: "passed", evidence_receipt: { ...binding, goal_revision: 3 } };
+      }
+  };
+  const badRegistry = new AdapterRegistry({ orchestratorClient: badOrchestratorClient });
+  await assert.rejects(
+    () => badRegistry.getAction("orchestrator_task_dispatch").run({
+      spec: { id: "goal-dispatch" }, run: { run_id: "run-bad" }, goalBinding: binding,
+      orchestratorClient: badOrchestratorClient
+    }),
+    /Goal binding mismatch/
+  );
 });
 
 
@@ -182,4 +268,35 @@ test("installed-style CLI Goal Contract probe returns the shared binding", () =>
   assert.equal(payload.goal_revision, contract.revision);
   assert.deepEqual(payload.criterion_ids, contract.acceptance_criteria.map((item) => item.criterion_id).sort());
   assert.match(payload.evidence_hash, /^[a-f0-9]{64}$/);
+});
+
+
+test("public CLI and async paths preserve the governed Goal Contract", async () => {
+  const contract = goalContract();
+  const cliPlan = JSON.parse(execFileSync(process.execPath, [
+    "src/cli.js",
+    "workflow-pack",
+    "worker-job-plan",
+    "--pack",
+    "scenario-simulation",
+    "--goal",
+    contract.statement,
+    "--live-model",
+    "false",
+    "--goal-contract-json",
+    JSON.stringify(contract),
+    "--json"
+  ], { encoding: "utf8" }));
+  assert.equal(cliPlan.manifest.goal_id, contract.goal_id);
+  assert.deepEqual(cliPlan.manifest.criterion_ids.sort(), ["criterion-note", "criterion-tests"]);
+
+  const home = await mkdtemp(join(tmpdir(), "across-autopilot-goal-async-"));
+  const store = new RunStore({ env: { ...process.env, ACROSS_HOME: home } });
+  const supervisor = new AutopilotSupervisor({ store });
+  const task = await supervisor.startAsyncTask("repo-quality-copilot", {
+    goalContract: contract,
+    spawn: false
+  });
+  const persisted = await store.loadRun(task.run_id);
+  assert.deepEqual(persisted.goal_contract, contract);
 });

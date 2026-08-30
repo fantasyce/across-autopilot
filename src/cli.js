@@ -317,19 +317,21 @@ async function handleLoopCommand(args) {
   if (subcommand === "validate") return printPayload(await supervisor.validateSpec(required(spec, "--spec")), parsed);
   if (subcommand === "dry-run") return printPayload(await supervisor.dryRun(required(spec, "--spec"), { modelOverrides: modelOverridesFromParsed(parsed) }), parsed);
   if (subcommand === "run") {
+    const goalContract = goalContractFromParsed(parsed);
     if (parsed.async || parsed["return-task-id"]) {
       return printPayload(await supervisor.startAsyncTask(required(spec, "--spec"), {
         trigger: parsed.trigger || "manual",
         modelOverrides: modelOverridesFromParsed(parsed),
+        goalContract,
         spawn: parsed.spawn === undefined ? true : !["0", "false", "no"].includes(String(parsed.spawn).toLowerCase())
       }), parsed);
     }
-    return printPayload(await supervisor.run(required(spec, "--spec"), { trigger: parsed.trigger || "manual", modelOverrides: modelOverridesFromParsed(parsed) }), parsed);
+    return printPayload(await supervisor.run(required(spec, "--spec"), { trigger: parsed.trigger || "manual", modelOverrides: modelOverridesFromParsed(parsed), goalContract }), parsed);
   }
   if (subcommand === "run-async-task") return printPayload(await supervisor.runAsyncTask(required(parsed["run-id"] || parsed["task-id"], "--run-id")), parsed);
   if (subcommand === "task-status") return printPayload(await supervisor.taskStatus(required(parsed["task-id"] || parsed["run-id"], "--task-id")), parsed);
   if (subcommand === "enqueue-trigger") {
-    return printPayload(await supervisor.enqueueTrigger(required(spec, "--spec"), triggerOptions(parsed)), parsed);
+    return printPayload(await supervisor.enqueueTrigger(required(spec, "--spec"), triggerOptions(parsed), { goalContract: goalContractFromParsed(parsed) }), parsed);
   }
   if (subcommand === "trigger-queue") return printPayload(await supervisor.triggerQueueStatus(), parsed);
   if (subcommand === "claim-trigger") {
@@ -419,7 +421,8 @@ async function handleWorkflowPackCommand(args) {
       packId: pack.id,
       goal: required(parsed.goal, "--goal"),
       projectId: parsed["project-id"] || null,
-      liveModel
+      liveModel,
+      goalContract: goalContractFromParsed(parsed)
     }), parsed);
   }
   if (subcommand === "worker-job-plan") {
@@ -428,7 +431,8 @@ async function handleWorkflowPackCommand(args) {
       packId: pack.id,
       goal: required(parsed.goal, "--goal"),
       projectId: parsed["project-id"] || null,
-      liveModel
+      liveModel,
+      goalContract: goalContractFromParsed(parsed)
     }), parsed);
   }
   if (subcommand === "validate") return printPayload(validateWorkflowPack(pack), parsed);
@@ -438,6 +442,13 @@ async function handleWorkflowPackCommand(args) {
   if (subcommand === "trust-receipt") return printPayload(renderWorkflowPackTrustReceipt(pack), parsed);
   if (subcommand === "frontier-interop") return printPayload(renderWorkflowPackFrontierInterop(pack), parsed);
   throw new Error(`Unknown workflow-pack command: ${subcommand || ""}`);
+}
+
+function goalContractFromParsed(parsed) {
+  const raw = parsed["goal-contract-json"] || parsed.goalContract || parsed.goal_contract;
+  if (!raw) return null;
+  const value = typeof raw === "string" ? JSON.parse(raw) : raw;
+  return normalizeGoalContract(value);
 }
 
 async function handleAgentPluginCommand(args) {
@@ -568,9 +579,9 @@ Commands:
   repo-push-gate --repo path [--base-ref ref] [--head-ref ref] [--max-repairs n] --json
   loop validate --spec path --json
   loop dry-run --spec path --json
-  loop run --spec path [--async --return-task-id] --json
+  loop run --spec path [--goal-contract-json '{}'] [--async --return-task-id] --json
   loop task-status --task-id id --json
-  loop enqueue-trigger --spec path --type cron --payload-json '{}' --json
+  loop enqueue-trigger --spec path --type cron --payload-json '{}' [--goal-contract-json '{}'] --json
   loop trigger-queue --json
   loop claim-trigger [--trigger-id id] [--lease-ms n] --json
   loop run-claimed-trigger --trigger-id id --json
@@ -596,8 +607,8 @@ Commands:
   workflow-pack trust-receipt --pack id-or-path --json
   workflow-pack frontier-interop --pack id-or-path --json
   workflow-pack resolve --goal text [--pack id] --json
-  workflow-pack execution-plan --pack id --goal text [--project-id id] [--live-model false] --json
-  workflow-pack worker-job-plan --pack id --goal text [--project-id id] [--live-model false] --json
+  workflow-pack execution-plan --pack id --goal text [--project-id id] [--live-model false] [--goal-contract-json '{}'] --json
+  workflow-pack worker-job-plan --pack id --goal text [--project-id id] [--live-model false] [--goal-contract-json '{}'] --json
   adapter pause --adapter-id id --json
   adapter resume --adapter-id id --json
   status --json

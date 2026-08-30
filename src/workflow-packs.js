@@ -447,12 +447,31 @@ export function buildWorkflowExecutionPlan({ packId, goal, projectId = null, liv
 function withGoalBinding(plan, goalContract, subtaskId) {
   if (!goalContract) return plan;
   const contract = normalizeGoalContract(goalContract);
-  const criterionIds = contract.acceptance_criteria.map((criterion) => criterion.criterion_id);
+  const executableCriteria = contract.acceptance_criteria.filter((criterion) => criterion.review_policy !== "human");
+  const criterionIds = executableCriteria.map((criterion) => criterion.criterion_id);
+  const humanCriterionIds = contract.acceptance_criteria
+    .filter((criterion) => criterion.review_policy === "human")
+    .map((criterion) => criterion.criterion_id);
+  const inputFingerprint = stableGoalHash(contract);
+  const manifest = plan.manifest ? {
+    ...plan.manifest,
+    task_id: contract.task_id,
+    goal_id: contract.goal_id,
+    goal_revision: contract.revision,
+    goal_node_id: subtaskId,
+    criterion_ids: [...criterionIds],
+    input_fingerprint: inputFingerprint,
+    required_evidence: [...new Set(executableCriteria.map((criterion) => criterion.validator_kind))].sort()
+  } : plan.manifest;
   return {
     ...plan,
     goal_id: contract.goal_id,
     goal_revision: contract.revision,
-    input_fingerprint: stableGoalHash(contract),
+    task_id: contract.task_id,
+    input_fingerprint: inputFingerprint,
+    criterion_ids: [...criterionIds],
+    manifest,
+    host_decisions: humanCriterionIds.map((criterionId) => ({ kind: "human_review", criterion_ids: [criterionId] })),
     subtasks: (plan.subtasks || []).map((subtask) => ({
       ...subtask,
       criterion_ids: subtask.id === subtaskId ? [...criterionIds] : []

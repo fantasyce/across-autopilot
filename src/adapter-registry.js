@@ -760,7 +760,7 @@ function promotionReportGeneration({ spec, actions }) {
   };
 }
 
-async function orchestratorDispatch({ spec, run, orchestratorClient }) {
+async function orchestratorDispatch({ spec, run, orchestratorClient, goalBinding = null }) {
   if (!orchestratorClient) {
     throw new LoopFailure({
       code: FAILURE_CODES.ORCHESTRATOR_SUBMIT_FAILED,
@@ -768,7 +768,8 @@ async function orchestratorDispatch({ spec, run, orchestratorClient }) {
       message: "Orchestrator client is not configured."
     });
   }
-  const task = await orchestratorClient.runLoopTask({ spec, run });
+  const task = await orchestratorClient.runLoopTask({ spec, run, ...(goalBinding ? { goalBinding } : {}) });
+  if (goalBinding) verifyReturnedGoalBinding(task?.evidence_receipt, goalBinding);
   const failed = task.status === "failed" || task.quality_status === "failed";
   const failureMessage = task.status_payload?.error
     || task.evidence_summary?.failure?.message
@@ -786,6 +787,20 @@ async function orchestratorDispatch({ spec, run, orchestratorClient }) {
       }
       : null
   };
+}
+
+function verifyReturnedGoalBinding(receipt, expected) {
+  if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) {
+    throw new Error("Goal binding mismatch: Orchestrator receipt is missing");
+  }
+  for (const field of ["goal_id", "goal_revision", "task_id", "input_fingerprint"]) {
+    if (receipt[field] !== expected[field]) throw new Error(`Goal binding mismatch: ${field}`);
+  }
+  const actualCriteria = [...new Set(asArray(receipt.criterion_ids).map(String))].sort();
+  const expectedCriteria = [...new Set(asArray(expected.criterion_ids).map(String))].sort();
+  if (stableJson(actualCriteria) !== stableJson(expectedCriteria)) {
+    throw new Error("Goal binding mismatch: criterion_ids");
+  }
 }
 
 function qualityGateEvaluation({ spec, sources, actions }) {

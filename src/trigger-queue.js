@@ -23,7 +23,7 @@ export class TriggerQueue {
     this.maxPreparationBackoffMs = positiveNumber(options.maxPreparationBackoffMs) || DEFAULT_MAX_PREPARATION_BACKOFF_MS;
   }
 
-  async enqueue(spec, trigger = {}, { now = new Date(), notBefore = null } = {}) {
+  async enqueue(spec, trigger = {}, { now = new Date(), notBefore = null, goalContract = null } = {}) {
     const queue = await this.list({ now });
     const event = normalizeTriggerEvent(trigger, spec, now);
     const idempotencyKey = String(trigger.idempotency_key || event.idempotency_key || defaultIdempotencyKey(spec, event));
@@ -48,7 +48,8 @@ export class TriggerQueue {
       completed_at: null,
       run_id: null,
       failure: null,
-      trigger_event: event
+      trigger_event: event,
+      goal_contract: goalContract
     };
     queue.items = [item, ...queue.items].slice(0, 500);
     await this.save(queue);
