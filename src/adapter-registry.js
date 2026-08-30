@@ -817,7 +817,10 @@ function verifyReturnedGoalBinding(task, expected) {
   const authorityStateValid = workerReceipt
     ? authority?.lease_state === "terminal_valid" && authority?.authority === "across-orchestrator-worker-coordinator"
     : authority?.execution_state === "terminal_valid" && authority?.authority === "across-orchestrator-loop-runtime";
-  if (!authority || authority.trust_state !== "verified" || !authorityStateValid) {
+  const authorityTrustValid = workerReceipt
+    ? authority?.trust_state === "verified"
+    : authority?.trust_state === "needs_review" && receipt.quality_status === "needs_review";
+  if (!authority || !authorityTrustValid || !authorityStateValid) {
     throw new Error("Goal binding mismatch: evidence authority");
   }
   const ownershipFields = workerReceipt

@@ -80,6 +80,25 @@ function verifiedTask(binding, overrides = {}) {
   };
 }
 
+function needsReviewLoopTask(binding, trustState = "needs_review") {
+  const receipt = {
+    schema_version: "across-orchestrator-goal-receipt/1.0", ...binding,
+    orchestrator_task_id: "loop-goal", run_id: "loop-goal",
+    terminal_state: "completed", quality_status: "needs_review"
+  };
+  const sort = (value) => Array.isArray(value) ? value.map(sort) : value && typeof value === "object"
+    ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, sort(value[key])])) : value;
+  receipt.receipt_hash = createHash("sha256").update(JSON.stringify(sort(receipt))).digest("hex");
+  return {
+    task_id: "loop-goal", status: "completed", quality_status: "needs_review", evidence_receipt: receipt,
+    goal_evidence_binding: {
+      ...binding, orchestrator_task_id: receipt.orchestrator_task_id, run_id: receipt.run_id,
+      receipt_hash: receipt.receipt_hash, execution_state: "terminal_valid",
+      trust_state: trustState, authority: "across-orchestrator-loop-runtime"
+    }
+  };
+}
+
 
 test("goal-aware plans bind every required criterion without changing the contract", () => {
   const supervisor = new AutopilotSupervisor();
@@ -101,6 +120,7 @@ test("goal-aware plans bind every required criterion without changing the contra
   ]);
   assert.ok(covered.has("criterion-tests"));
   assert.ok(covered.has("criterion-review"));
+  assert.equal(covered.has("criterion-note"), false);
   assert.ok(plan.host_decisions.some((decision) => decision.criterion_ids.includes("criterion-review")));
 });
 
@@ -211,6 +231,25 @@ test("Orchestrator dispatch receives and verifies the immutable Goal binding", a
   });
   assert.deepEqual(dispatched.goalBinding, binding);
   assert.equal(action.status, "passed");
+
+  const loopClient = { async runLoopTask() { return needsReviewLoopTask(binding); } };
+  const loopRegistry = new AdapterRegistry({ orchestratorClient: loopClient });
+  const provisional = await loopRegistry.getAction("orchestrator_task_dispatch").run({
+    spec: { id: "goal-loop-dispatch" }, run: { run_id: "run-loop" }, goalBinding: binding,
+    orchestratorClient: loopClient
+  });
+  assert.equal(provisional.status, "passed");
+  assert.equal(provisional.result.task.goal_evidence_binding.trust_state, "needs_review");
+
+  const selfApprovingLoopClient = { async runLoopTask() { return needsReviewLoopTask(binding, "verified"); } };
+  const selfApprovingRegistry = new AdapterRegistry({ orchestratorClient: selfApprovingLoopClient });
+  await assert.rejects(
+    () => selfApprovingRegistry.getAction("orchestrator_task_dispatch").run({
+      spec: { id: "goal-self-approved-loop" }, run: { run_id: "run-self-approved" }, goalBinding: binding,
+      orchestratorClient: selfApprovingLoopClient
+    }),
+    /evidence authority/
+  );
 
   const badOrchestratorClient = {
       async runLoopTask() {

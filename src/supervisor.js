@@ -726,7 +726,7 @@ export class AutopilotSupervisor {
     const actionIds = [...(spec.used_adapters?.actions || [])];
     const plannedActions = actionIds.map((adapter) => ({ adapter, criterion_ids: [] }));
     const hostDecisions = [];
-    const executableCriteria = contract.acceptance_criteria.filter((criterion) => criterion.review_policy !== "human");
+    const executableCriteria = contract.acceptance_criteria.filter((criterion) => criterion.required === true && criterion.review_policy !== "human");
     executableCriteria.forEach((criterion, index) => {
       if (plannedActions.length) {
         plannedActions[index % plannedActions.length].criterion_ids.push(criterion.criterion_id);
@@ -734,7 +734,7 @@ export class AutopilotSupervisor {
         hostDecisions.push({ kind: "execution_planning_required", criterion_ids: [criterion.criterion_id] });
       }
     });
-    for (const criterion of contract.acceptance_criteria.filter((item) => item.review_policy === "human")) {
+    for (const criterion of contract.acceptance_criteria.filter((item) => item.required === true && item.review_policy === "human")) {
       hostDecisions.push({ kind: "human_review", criterion_ids: [criterion.criterion_id] });
     }
     return {
